@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>מערכת תחקור תרגילים</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #f4f6f8; color: #17202a; }
+    header { padding: 16px 20px; background: #17202a; color: white; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    header h1 { font-size: 20px; margin: 0 0 0 auto; }
+    select, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #ccd1d1; font-size: 14px; }
+    button { cursor: pointer; font-weight: 700; }
+    main { display:grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 72px); }
+    aside { padding:16px; background:white; border-left:1px solid #ddd; overflow:auto; }
+    #map { height: calc(100vh - 72px); }
+    .card { border:1px solid #e0e0e0; border-radius:10px; padding:12px; margin-bottom:10px; background:#fff; }
+    .muted { color:#68737d; font-size:12px; }
+    .participant { display:flex; width:100%; text-align:right; margin-top:6px; padding:10px; border:1px solid #e0e0e0; border-radius:8px; background:#fafafa; cursor:pointer; gap:10px; align-items:flex-start; }
+    .participant input { margin-top:3px; accent-color:var(--track-color); }
+    .participant-content { flex:1; min-width:0; }
+    .track-color { width:12px; height:12px; margin-top:3px; border-radius:50%; background:var(--track-color); flex:0 0 auto; }
+    .track-summary { padding:6px 8px 6px 0; border-bottom:1px solid #eee; }
+    .track-summary:last-child { border-bottom:0; }
+    @media(max-width:800px){ main{grid-template-columns:1fr;} aside{order:2;} #map{height:60vh;} }
+  </style>
+</head>
+<body>
+<header>
+  <h1>מערכת תחקור תרגילים — Prototype 0.2</h1>
+  <select id="exerciseSelect"><option value="">בחר תרגיל</option></select>
+  <button id="refresh">רענן</button>
+</header>
+<main>
+  <aside>
+    <div class="card">
+      <strong id="exerciseName">לא נבחר תרגיל</strong>
+      <div class="muted" id="exerciseStatus"></div>
+    </div>
+    <div class="card">
+      <strong>משתתפים</strong>
+      <div class="muted">סמן משתתף כדי להציג את המסלול שלו. ניתן להציג מספר מסלולים יחד.</div>
+      <div id="participants"></div>
+    </div>
+    <div class="card">
+      <strong>מסלולים מוצגים</strong>
+      <div id="trackInfo" class="muted">אין מסלולים מוצגים.</div>
+    </div>
+  </aside>
+  <div id="map"></div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+const map = L.map('map').setView([31.95, 35.13], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 20,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+const trackColors = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#be185d', '#4d7c0f'];
+const visibleTracks = new Map();
+let currentExercise = null;
+
+async function api(path) {
+  const response = await fetch('/api/v1' + path);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+async function loadExercises() {
+  const data = await api('/exercises');
+  const select = document.getElementById('exerciseSelect');
+  const previous = select.value;
+  select.innerHTML = '<option value="">בחר תרגיל</option>';
+  data.items.forEach(exercise => {
+    const option = document.createElement('option');
+    option.value = exercise.id;
+    option.textContent = `${exercise.name} — ${exercise.status}`;
+    select.appendChild(option);
+  });
+  if (previous) select.value = previous;
+}
+
+async function loadExercise(id) {
+  clearTracks();
+  currentExercise = id;
+  const data = await api(`/exercises/${id}/map-bootstrap`);
+  document.getElementById('exerciseName').textContent = data.exercise.name;
+  document.getElementById('exerciseStatus').textContent = `סטטוס: ${data.exercise.status}`;
+  const root = document.getElementById('participants');
+  root.innerHTML = '';
+  data.participants.forEach((participant, index) => addParticipant(root, participant, trackColors[index % trackColors.length]));
+}
+
+function addParticipant(root, participant, color) {
+  const label = document.createElement('label');
+  label.className = 'participant';
+  label.style.setProperty('--track-color', color);
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.onchange = () => toggleTrack(participant, checkbox, color);
+  const dot = document.createElement('span');
+  dot.className = 'track-color';
+  const content = document.createElement('span');
+  content.className = 'participant-content';
+  const name = document.createElement('strong');
+  name.textContent = participant.displayName + (participant.callsign ? ` — ${participant.callsign}` : '');
+  const count = document.createElement('div');
+  count.className = 'muted';
+  count.textContent = `${participant.pointCount} נקודות GPS`;
+  content.append(name, count);
+  label.append(checkbox, dot, content);
+  root.appendChild(label);
+}
+
+function clearTracks() {
+  for (const track of visibleTracks.values()) track.layers.forEach(layer => map.removeLayer(layer));
+  visibleTracks.clear();
+  renderTrackInfo();
+}
+
+async function toggleTrack(participant, checkbox, color) {
+  if (!checkbox.checked) {
+    const track = visibleTracks.get(participant.id);
+    if (track) track.layers.forEach(layer => map.removeLayer(layer));
+    visibleTracks.delete(participant.id);
+    renderTrackInfo();
+    fitVisibleTracks();
+    return;
+  }
+  checkbox.disabled = true;
+  const requestedExercise = currentExercise;
+  let data;
+  try {
+    data = await api(`/exercises/${currentExercise}/tracks/${participant.id}`);
+  } catch (error) {
+    checkbox.checked = false;
+    document.getElementById('trackInfo').textContent = `שגיאה בטעינת המסלול: ${error.message}`;
+    checkbox.disabled = false;
+    return;
+  }
+  checkbox.disabled = false;
+  if (!checkbox.checked || requestedExercise !== currentExercise) return;
+  if (!data.points.length) {
+    checkbox.checked = false;
+    document.getElementById('trackInfo').textContent = `אין עדיין נקודות GPS עבור ${data.displayName}.`;
+    return;
+  }
+  const latlngs = data.points.map(point => [point.latitude, point.longitude]);
+  const line = L.polyline(latlngs, {color, weight: 4, opacity: 0.85}).addTo(map);
+  const start = L.circleMarker(latlngs[0], {radius: 6, color, fillColor: color, fillOpacity: 1})
+    .bindPopup(`תחילת המסלול — ${data.displayName}`).addTo(map);
+  const end = L.circleMarker(latlngs[latlngs.length - 1], {radius: 7, color, fillColor: '#fff', fillOpacity: 1, weight: 3})
+    .bindPopup(`סוף המסלול — ${data.displayName}`).addTo(map);
+  visibleTracks.set(participant.id, {data, color, line, layers: [line, start, end]});
+  renderTrackInfo();
+  fitVisibleTracks();
+}
+
+function fitVisibleTracks() {
+  if (!visibleTracks.size) return;
+  const bounds = L.latLngBounds([]);
+  for (const track of visibleTracks.values()) bounds.extend(track.line.getBounds());
+  if (bounds.isValid()) map.fitBounds(bounds, {padding: [30, 30]});
+}
+
+function renderTrackInfo() {
+  const root = document.getElementById('trackInfo');
+  root.innerHTML = '';
+  if (!visibleTracks.size) {
+    root.textContent = 'אין מסלולים מוצגים.';
+    return;
+  }
+  for (const {data, color} of visibleTracks.values()) {
+    const item = document.createElement('div');
+    item.className = 'track-summary';
+    item.style.borderRight = `4px solid ${color}`;
+    const title = document.createElement('strong');
+    title.textContent = data.displayName;
+    const details = document.createElement('div');
+    const first = new Date(data.points[0].capturedAt).toLocaleString('he-IL');
+    const last = new Date(data.points[data.points.length - 1].capturedAt).toLocaleString('he-IL');
+    details.textContent = `${data.count} נקודות · ${first} ← ${last}`;
+    item.append(title, details);
+    root.appendChild(item);
+  }
+}
+
+document.getElementById('exerciseSelect').onchange = event => event.target.value && loadExercise(event.target.value);
+document.getElementById('refresh').onclick = async () => {
+  await loadExercises();
+  if (currentExercise) await loadExercise(currentExercise);
+};
+loadExercises();
+</script>
+</body>
+</html>
