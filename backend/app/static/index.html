@@ -12,9 +12,20 @@
     header h1 { font-size: 20px; margin: 0 0 0 auto; }
     select, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #ccd1d1; font-size: 14px; }
     button { cursor: pointer; font-weight: 700; }
-    main { display:grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 72px); }
+    main { display:grid; grid-template-columns: 300px minmax(0, 1fr); height:calc(100vh - 72px); min-height:560px; }
     aside { padding:16px; background:white; border-left:1px solid #ddd; overflow:auto; }
-    #map { height: calc(100vh - 72px); }
+    .map-area { display:flex; flex-direction:column; min-width:0; min-height:0; }
+    #map { flex:1; min-height:360px; }
+    #timeline { background:#fff; border-top:1px solid #ddd; padding:12px 20px 14px; direction:rtl; }
+    .timeline-header { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:8px; }
+    .timeline-current { font-variant-numeric:tabular-nums; color:#425466; font-size:13px; }
+    .timeline-chart { direction:ltr; }
+    .timeline-lanes { display:grid; gap:3px; min-height:16px; max-height:64px; overflow-y:auto; margin:0 7px 5px; }
+    .timeline-lane { position:relative; height:7px; background:#edf0f2; border-radius:999px; overflow:hidden; }
+    .timeline-range { position:absolute; top:0; bottom:0; min-width:4px; border-radius:999px; }
+    #timelineCursor { display:block; width:100%; margin:0; accent-color:#17202a; }
+    .timeline-labels { display:flex; justify-content:space-between; gap:16px; direction:ltr; margin-top:3px; color:#68737d; font-size:12px; font-variant-numeric:tabular-nums; }
+    .timeline-empty { padding:8px 0; text-align:center; color:#68737d; font-size:13px; }
     .card { border:1px solid #e0e0e0; border-radius:10px; padding:12px; margin-bottom:10px; background:#fff; }
     .muted { color:#68737d; font-size:12px; }
     #participants { max-height:min(52vh, 520px); overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding-left:4px; }
@@ -24,7 +35,7 @@
     .track-color { width:12px; height:12px; margin-top:3px; border-radius:50%; background:var(--track-color); flex:0 0 auto; }
     .track-summary { padding:6px 8px 6px 0; border-bottom:1px solid #eee; }
     .track-summary:last-child { border-bottom:0; }
-    @media(max-width:800px){ main{grid-template-columns:1fr;} aside{order:2;} #map{height:60vh;} #participants{max-height:40vh;} }
+    @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
   </style>
 </head>
 <body>
@@ -49,7 +60,24 @@
       <div id="trackInfo" class="muted">אין מסלולים מוצגים.</div>
     </div>
   </aside>
-  <div id="map"></div>
+  <div class="map-area">
+    <div id="map"></div>
+    <section id="timeline" aria-label="ציר הזמן של המסלולים המוצגים">
+      <div class="timeline-header">
+        <strong>ציר זמן</strong>
+        <span id="timelineCurrent" class="timeline-current"></span>
+      </div>
+      <div id="timelineEmpty" class="timeline-empty">בחר מסלול אחד לפחות כדי להציג את ציר הזמן.</div>
+      <div id="timelineChart" class="timeline-chart" hidden>
+        <div id="timelineLanes" class="timeline-lanes"></div>
+        <input id="timelineCursor" type="range" aria-label="נקודת הזמן הנוכחית" disabled />
+        <div class="timeline-labels">
+          <time id="timelineStart"></time>
+          <time id="timelineEnd"></time>
+        </div>
+      </div>
+    </section>
+  </div>
 </main>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
@@ -119,6 +147,7 @@ function clearTracks() {
   for (const track of visibleTracks.values()) track.layers.forEach(layer => map.removeLayer(layer));
   visibleTracks.clear();
   renderTrackInfo();
+  updateTimeline();
 }
 
 async function toggleTrack(participant, checkbox, color) {
@@ -127,6 +156,7 @@ async function toggleTrack(participant, checkbox, color) {
     if (track) track.layers.forEach(layer => map.removeLayer(layer));
     visibleTracks.delete(participant.id);
     renderTrackInfo();
+    updateTimeline();
     fitVisibleTracks();
     return;
   }
@@ -156,6 +186,7 @@ async function toggleTrack(participant, checkbox, color) {
     .bindPopup(`סוף המסלול — ${data.displayName}`).addTo(map);
   visibleTracks.set(participant.id, {data, color, line, layers: [line, start, end]});
   renderTrackInfo();
+  updateTimeline();
   fitVisibleTracks();
 }
 
@@ -186,6 +217,67 @@ function renderTrackInfo() {
     item.append(title, details);
     root.appendChild(item);
   }
+}
+
+function formatTimelineTime(timestamp) {
+  return new Intl.DateTimeFormat('he-IL', {
+    dateStyle: 'short',
+    timeStyle: 'medium'
+  }).format(new Date(timestamp));
+}
+
+function updateTimeline() {
+  const empty = document.getElementById('timelineEmpty');
+  const chart = document.getElementById('timelineChart');
+  const current = document.getElementById('timelineCurrent');
+  const lanes = document.getElementById('timelineLanes');
+  const cursor = document.getElementById('timelineCursor');
+  const ranges = [...visibleTracks.values()].map(track => {
+    const timestamps = track.data.points
+      .map(point => Date.parse(point.capturedAt))
+      .filter(Number.isFinite);
+    return timestamps.length ? {
+      name: track.data.displayName,
+      color: track.color,
+      start: timestamps.reduce((minimum, timestamp) => Math.min(minimum, timestamp)),
+      end: timestamps.reduce((maximum, timestamp) => Math.max(maximum, timestamp))
+    } : null;
+  }).filter(Boolean);
+
+  if (!ranges.length) {
+    empty.hidden = false;
+    chart.hidden = true;
+    current.textContent = '';
+    lanes.innerHTML = '';
+    return;
+  }
+
+  const start = Math.min(...ranges.map(range => range.start));
+  const end = Math.max(...ranges.map(range => range.end));
+  const duration = Math.max(end - start, 1);
+  document.getElementById('timelineStart').textContent = formatTimelineTime(start);
+  document.getElementById('timelineEnd').textContent = formatTimelineTime(end);
+  cursor.min = String(start);
+  cursor.max = String(end);
+  cursor.value = String(start);
+  current.textContent = `זמן נוכחי: ${formatTimelineTime(start)}`;
+  lanes.innerHTML = '';
+
+  ranges.forEach(range => {
+    const lane = document.createElement('div');
+    lane.className = 'timeline-lane';
+    lane.setAttribute('aria-label', `${range.name}: ${formatTimelineTime(range.start)} עד ${formatTimelineTime(range.end)}`);
+    const segment = document.createElement('span');
+    segment.className = 'timeline-range';
+    segment.style.background = range.color;
+    segment.style.left = `${((range.start - start) / duration) * 100}%`;
+    segment.style.width = `${Math.max(((range.end - range.start) / duration) * 100, 0.5)}%`;
+    lane.appendChild(segment);
+    lanes.appendChild(lane);
+  });
+
+  empty.hidden = true;
+  chart.hidden = false;
 }
 
 document.getElementById('exerciseSelect').onchange = event => event.target.value && loadExercise(event.target.value);
