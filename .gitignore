@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+*.dump
 .venv/
 .dart_tool/
 build/
