@@ -17,13 +17,14 @@
     #map { height: calc(100vh - 72px); }
     .card { border:1px solid #e0e0e0; border-radius:10px; padding:12px; margin-bottom:10px; background:#fff; }
     .muted { color:#68737d; font-size:12px; }
+    #participants { max-height:min(52vh, 520px); overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding-left:4px; }
     .participant { display:flex; width:100%; text-align:right; margin-top:6px; padding:10px; border:1px solid #e0e0e0; border-radius:8px; background:#fafafa; cursor:pointer; gap:10px; align-items:flex-start; }
     .participant input { margin-top:3px; accent-color:var(--track-color); }
     .participant-content { flex:1; min-width:0; }
     .track-color { width:12px; height:12px; margin-top:3px; border-radius:50%; background:var(--track-color); flex:0 0 auto; }
     .track-summary { padding:6px 8px 6px 0; border-bottom:1px solid #eee; }
     .track-summary:last-child { border-bottom:0; }
-    @media(max-width:800px){ main{grid-template-columns:1fr;} aside{order:2;} #map{height:60vh;} }
+    @media(max-width:800px){ main{grid-template-columns:1fr;} aside{order:2;} #map{height:60vh;} #participants{max-height:40vh;} }
   </style>
 </head>
 <body>
