@@ -36,7 +36,8 @@ android:usesCleartextTraffic="true"
 
 ### כתובת שרת
 
-- Android Emulator: `http://10.0.2.2:8000`
+- Production: `https://retrace-exercise-platform.onrender.com`
+- Android Emulator with local API: `http://10.0.2.2:8000`
 - טלפון אמיתי: `http://<IP-של-המחשב-ברשת>:8000`
 
 ודא שחומת האש מאפשרת TCP 8000.

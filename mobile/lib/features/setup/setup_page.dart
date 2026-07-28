@@ -12,7 +12,9 @@ class SetupPage extends StatefulWidget {
 }
 
 class _SetupPageState extends State<SetupPage> {
-  final _server = TextEditingController(text: 'http://10.0.2.2:8000');
+  final _server = TextEditingController(
+    text: 'https://retrace-exercise-platform.onrender.com',
+  );
   final _exerciseName = TextEditingController(text: 'תרגיל ניסוי GPS');
   final _displayName = TextEditingController(text: 'משתתף 1');
   final _callsign = TextEditingController(text: 'כוח 1');
@@ -103,7 +105,10 @@ class _SetupPageState extends State<SetupPage> {
             child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ),
           const SizedBox(height: 20),
-          const Text('Android Emulator: השתמש ב־http://10.0.2.2:8000. בטלפון אמיתי יש להזין את כתובת ה־IP של המחשב באותה רשת.', style: TextStyle(fontSize: 12)),
+          const Text(
+            'שרת ברירת המחדל מאוחסן בענן וזמין מכל רשת באמצעות HTTPS.',
+            style: TextStyle(fontSize: 12),
+          ),
         ],
       ),
     );
