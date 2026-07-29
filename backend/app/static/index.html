@@ -19,6 +19,10 @@
     #timeline { background:#fff; border-top:1px solid #ddd; padding:12px 20px 14px; direction:rtl; }
     .timeline-header { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:8px; }
     .timeline-current { font-variant-numeric:tabular-nums; color:#425466; font-size:13px; }
+    .timeline-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+    .timeline-controls button { min-width:78px; padding:7px 12px; }
+    .timeline-controls label { display:flex; align-items:center; gap:6px; margin-right:auto; font-size:13px; }
+    .timeline-controls select { padding:7px 10px; }
     .timeline-chart { direction:ltr; }
     .timeline-lanes { display:grid; gap:3px; min-height:16px; max-height:64px; overflow-y:auto; margin:0 7px 5px; }
     .timeline-lane { position:relative; height:7px; background:#edf0f2; border-radius:999px; overflow:hidden; }
@@ -67,10 +71,22 @@
         <strong>ציר זמן</strong>
         <span id="timelineCurrent" class="timeline-current"></span>
       </div>
+      <div class="timeline-controls" aria-label="פקדי ניגון">
+        <button id="playPauseButton" type="button" disabled>PLAY</button>
+        <button id="stopButton" type="button" disabled>STOP</button>
+        <label for="playbackRate">
+          קצב
+          <select id="playbackRate" disabled>
+            <option value="1">נקודה אחת בשנייה</option>
+            <option value="5">5 נקודות בשנייה</option>
+            <option value="10">10 נקודות בשנייה</option>
+          </select>
+        </label>
+      </div>
       <div id="timelineEmpty" class="timeline-empty">בחר מסלול אחד לפחות כדי להציג את ציר הזמן.</div>
       <div id="timelineChart" class="timeline-chart" hidden>
         <div id="timelineLanes" class="timeline-lanes"></div>
-        <input id="timelineCursor" type="range" aria-label="נקודת הזמן הנוכחית" disabled />
+        <input id="timelineCursor" type="range" aria-label="נקודת הזמן הנוכחית" />
         <div class="timeline-labels">
           <time id="timelineStart"></time>
           <time id="timelineEnd"></time>
@@ -90,6 +106,9 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 const trackColors = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#be185d', '#4d7c0f'];
 const visibleTracks = new Map();
 let currentExercise = null;
+let playbackTimer = null;
+let playbackTimestamps = [];
+let playbackIndex = 0;
 
 async function api(path) {
   const response = await fetch('/api/v1' + path);
@@ -226,12 +245,78 @@ function formatTimelineTime(timestamp) {
   }).format(new Date(timestamp));
 }
 
+function setPlaybackPosition(index) {
+  if (!playbackTimestamps.length) return;
+  playbackIndex = Math.max(0, Math.min(index, playbackTimestamps.length - 1));
+  const timestamp = playbackTimestamps[playbackIndex];
+  document.getElementById('timelineCursor').value = String(timestamp);
+  document.getElementById('timelineCurrent').textContent =
+    `נקודה ${playbackIndex + 1} מתוך ${playbackTimestamps.length} · ${formatTimelineTime(timestamp)}`;
+}
+
+function pausePlayback() {
+  if (playbackTimer !== null) {
+    clearInterval(playbackTimer);
+    playbackTimer = null;
+  }
+  const button = document.getElementById('playPauseButton');
+  button.textContent = 'PLAY';
+  button.setAttribute('aria-pressed', 'false');
+}
+
+function advancePlayback() {
+  if (playbackIndex >= playbackTimestamps.length - 1) {
+    pausePlayback();
+    return;
+  }
+  setPlaybackPosition(playbackIndex + 1);
+  if (playbackIndex >= playbackTimestamps.length - 1) pausePlayback();
+}
+
+function startPlayback() {
+  if (!playbackTimestamps.length) return;
+  if (playbackIndex >= playbackTimestamps.length - 1) setPlaybackPosition(0);
+  const rate = Number(document.getElementById('playbackRate').value);
+  const button = document.getElementById('playPauseButton');
+  button.textContent = 'PAUSE';
+  button.setAttribute('aria-pressed', 'true');
+  playbackTimer = setInterval(advancePlayback, 1000 / rate);
+}
+
+function stopPlayback() {
+  pausePlayback();
+  if (playbackTimestamps.length) setPlaybackPosition(0);
+}
+
+function findNearestPlaybackIndex(timestamp) {
+  let low = 0;
+  let high = playbackTimestamps.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (playbackTimestamps[middle] < timestamp) low = middle + 1;
+    else high = middle;
+  }
+  if (low === 0) return 0;
+  if (low === playbackTimestamps.length) return playbackTimestamps.length - 1;
+  return timestamp - playbackTimestamps[low - 1] <= playbackTimestamps[low] - timestamp
+    ? low - 1
+    : low;
+}
+
 function updateTimeline() {
+  pausePlayback();
   const empty = document.getElementById('timelineEmpty');
   const chart = document.getElementById('timelineChart');
   const current = document.getElementById('timelineCurrent');
   const lanes = document.getElementById('timelineLanes');
   const cursor = document.getElementById('timelineCursor');
+  const playPauseButton = document.getElementById('playPauseButton');
+  const stopButton = document.getElementById('stopButton');
+  const rateSelect = document.getElementById('playbackRate');
+  playbackTimestamps = [...visibleTracks.values()]
+    .flatMap(track => track.data.points.map(point => Date.parse(point.capturedAt)))
+    .filter(Number.isFinite)
+    .sort((first, second) => first - second);
   const ranges = [...visibleTracks.values()].map(track => {
     const timestamps = track.data.points
       .map(point => Date.parse(point.capturedAt))
@@ -245,10 +330,15 @@ function updateTimeline() {
   }).filter(Boolean);
 
   if (!ranges.length) {
+    playbackTimestamps = [];
+    playbackIndex = 0;
     empty.hidden = false;
     chart.hidden = true;
     current.textContent = '';
     lanes.innerHTML = '';
+    playPauseButton.disabled = true;
+    stopButton.disabled = true;
+    rateSelect.disabled = true;
     return;
   }
 
@@ -259,8 +349,7 @@ function updateTimeline() {
   document.getElementById('timelineEnd').textContent = formatTimelineTime(end);
   cursor.min = String(start);
   cursor.max = String(end);
-  cursor.value = String(start);
-  current.textContent = `זמן נוכחי: ${formatTimelineTime(start)}`;
+  cursor.step = '1';
   lanes.innerHTML = '';
 
   ranges.forEach(range => {
@@ -278,8 +367,27 @@ function updateTimeline() {
 
   empty.hidden = true;
   chart.hidden = false;
+  playPauseButton.disabled = false;
+  stopButton.disabled = false;
+  rateSelect.disabled = false;
+  setPlaybackPosition(0);
 }
 
+document.getElementById('playPauseButton').onclick = () => {
+  if (playbackTimer === null) startPlayback();
+  else pausePlayback();
+};
+document.getElementById('stopButton').onclick = stopPlayback;
+document.getElementById('playbackRate').onchange = () => {
+  if (playbackTimer === null) return;
+  clearInterval(playbackTimer);
+  const rate = Number(document.getElementById('playbackRate').value);
+  playbackTimer = setInterval(advancePlayback, 1000 / rate);
+};
+document.getElementById('timelineCursor').oninput = event => {
+  pausePlayback();
+  setPlaybackPosition(findNearestPlaybackIndex(Number(event.target.value)));
+};
 document.getElementById('exerciseSelect').onchange = event => event.target.value && loadExercise(event.target.value);
 document.getElementById('refresh').onclick = async () => {
   await loadExercises();
