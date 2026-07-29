@@ -21,7 +21,8 @@
     .timeline-current { font-variant-numeric:tabular-nums; color:#425466; font-size:13px; }
     .timeline-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
     .timeline-controls button { min-width:78px; padding:7px 12px; }
-    .timeline-controls label { display:flex; align-items:center; gap:6px; margin-right:auto; font-size:13px; }
+    .timeline-controls label { display:flex; align-items:center; gap:6px; font-size:13px; }
+    .timeline-controls .rate-control { margin-right:auto; }
     .timeline-controls select { padding:7px 10px; }
     .timeline-chart { direction:ltr; }
     .timeline-lanes { display:grid; gap:3px; min-height:16px; max-height:64px; overflow-y:auto; margin:0 7px 5px; }
@@ -74,7 +75,7 @@
       <div class="timeline-controls" aria-label="פקדי ניגון">
         <button id="playPauseButton" type="button" disabled>PLAY</button>
         <button id="stopButton" type="button" disabled>STOP</button>
-        <label for="playbackRate">
+        <label class="rate-control" for="playbackRate">
           קצב
           <select id="playbackRate" disabled>
             <option value="1">נקודה אחת בשנייה</option>
@@ -82,6 +83,16 @@
             <option value="10">10 נקודות בשנייה</option>
           </select>
         </label>
+        <label for="trailEnabled">
+          <input id="trailEnabled" type="checkbox" disabled />
+          שובל
+        </label>
+        <select id="trailLength" aria-label="אורך השובל" disabled>
+          <option value="10">10 נקודות</option>
+          <option value="30" selected>30 נקודות</option>
+          <option value="50">50 נקודות</option>
+          <option value="100">100 נקודות</option>
+        </select>
       </div>
       <div id="timelineEmpty" class="timeline-empty">בחר מסלול אחד לפחות כדי להציג את ציר הזמן.</div>
       <div id="timelineChart" class="timeline-chart" hidden>
@@ -230,6 +241,7 @@ async function toggleTrack(participant, checkbox, color) {
     timedPoints,
     allLatLngs: timedPoints.map(point => point.latlng),
     visiblePointCount: 0,
+    visibleStartIndex: 0,
     line,
     pointLayer,
     startMarker,
@@ -301,12 +313,16 @@ function visiblePointCountAtTime(points, timestamp) {
 }
 
 function renderMapAtTime(timestamp) {
+  const trailEnabled = document.getElementById('trailEnabled').checked;
+  const trailLength = Number(document.getElementById('trailLength').value);
   for (const track of visibleTracks.values()) {
     const nextCount = visiblePointCountAtTime(track.timedPoints, timestamp);
-    if (nextCount < track.visiblePointCount) {
+    const nextStartIndex = trailEnabled ? Math.max(0, nextCount - trailLength) : 0;
+    if (nextCount < track.visiblePointCount || nextStartIndex !== track.visibleStartIndex) {
       track.line.setLatLngs([]);
       track.pointLayer.clearLayers();
-      track.visiblePointCount = 0;
+      track.visiblePointCount = nextStartIndex;
+      track.visibleStartIndex = nextStartIndex;
     }
 
     for (let index = track.visiblePointCount; index < nextCount; index++) {
@@ -323,7 +339,11 @@ function renderMapAtTime(timestamp) {
 
     if (nextCount > 0) {
       const latest = track.timedPoints[nextCount - 1];
-      if (!map.hasLayer(track.startMarker)) track.startMarker.addTo(map);
+      if (!trailEnabled || nextStartIndex === 0) {
+        if (!map.hasLayer(track.startMarker)) track.startMarker.addTo(map);
+      } else if (map.hasLayer(track.startMarker)) {
+        map.removeLayer(track.startMarker);
+      }
       track.currentMarker
         .setLatLng(latest.latlng)
         .bindPopup(`${track.data.displayName}<br>${formatTimelineTime(latest.timestamp)}`);
@@ -334,6 +354,7 @@ function renderMapAtTime(timestamp) {
     }
 
     track.visiblePointCount = nextCount;
+    track.visibleStartIndex = nextStartIndex;
   }
 }
 
@@ -396,6 +417,8 @@ function updateTimeline() {
   const playPauseButton = document.getElementById('playPauseButton');
   const stopButton = document.getElementById('stopButton');
   const rateSelect = document.getElementById('playbackRate');
+  const trailCheckbox = document.getElementById('trailEnabled');
+  const trailSelect = document.getElementById('trailLength');
   playbackTimestamps = [...visibleTracks.values()]
     .flatMap(track => track.data.points.map(point => Date.parse(point.capturedAt)))
     .filter(Number.isFinite)
@@ -422,6 +445,8 @@ function updateTimeline() {
     playPauseButton.disabled = true;
     stopButton.disabled = true;
     rateSelect.disabled = true;
+    trailCheckbox.disabled = true;
+    trailSelect.disabled = true;
     return;
   }
 
@@ -453,6 +478,8 @@ function updateTimeline() {
   playPauseButton.disabled = false;
   stopButton.disabled = false;
   rateSelect.disabled = false;
+  trailCheckbox.disabled = false;
+  trailSelect.disabled = !trailCheckbox.checked;
   setPlaybackPosition(0);
 }
 
@@ -466,6 +493,13 @@ document.getElementById('playbackRate').onchange = () => {
   clearInterval(playbackTimer);
   const rate = Number(document.getElementById('playbackRate').value);
   playbackTimer = setInterval(advancePlayback, 1000 / rate);
+};
+document.getElementById('trailEnabled').onchange = event => {
+  document.getElementById('trailLength').disabled = !event.target.checked || !playbackTimestamps.length;
+  if (playbackTimestamps.length) renderMapAtTime(playbackTimestamps[playbackIndex]);
+};
+document.getElementById('trailLength').onchange = () => {
+  if (playbackTimestamps.length) renderMapAtTime(playbackTimestamps[playbackIndex]);
 };
 document.getElementById('timelineCursor').oninput = event => {
   pausePlayback();
