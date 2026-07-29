@@ -197,13 +197,45 @@ async function toggleTrack(participant, checkbox, color) {
     document.getElementById('trackInfo').textContent = `אין עדיין נקודות GPS עבור ${data.displayName}.`;
     return;
   }
-  const latlngs = data.points.map(point => [point.latitude, point.longitude]);
-  const line = L.polyline(latlngs, {color, weight: 4, opacity: 0.85}).addTo(map);
-  const start = L.circleMarker(latlngs[0], {radius: 6, color, fillColor: color, fillOpacity: 1})
-    .bindPopup(`תחילת המסלול — ${data.displayName}`).addTo(map);
-  const end = L.circleMarker(latlngs[latlngs.length - 1], {radius: 7, color, fillColor: '#fff', fillOpacity: 1, weight: 3})
-    .bindPopup(`סוף המסלול — ${data.displayName}`).addTo(map);
-  visibleTracks.set(participant.id, {data, color, line, layers: [line, start, end]});
+  const timedPoints = data.points
+    .map(point => ({
+      timestamp: Date.parse(point.capturedAt),
+      latlng: [point.latitude, point.longitude]
+    }))
+    .filter(point => Number.isFinite(point.timestamp))
+    .sort((first, second) => first.timestamp - second.timestamp);
+  if (!timedPoints.length) {
+    checkbox.checked = false;
+    document.getElementById('trackInfo').textContent = `לא נמצאו חותמות זמן תקינות עבור ${data.displayName}.`;
+    return;
+  }
+  const line = L.polyline([], {color, weight: 4, opacity: 0.85}).addTo(map);
+  const pointLayer = L.layerGroup().addTo(map);
+  const startMarker = L.circleMarker(timedPoints[0].latlng, {
+    radius: 5,
+    color,
+    fillColor: color,
+    fillOpacity: 1
+  }).bindPopup(`תחילת המסלול — ${data.displayName}`);
+  const currentMarker = L.circleMarker(timedPoints[0].latlng, {
+    radius: 7,
+    color,
+    fillColor: '#fff',
+    fillOpacity: 1,
+    weight: 3
+  });
+  visibleTracks.set(participant.id, {
+    data,
+    color,
+    timedPoints,
+    allLatLngs: timedPoints.map(point => point.latlng),
+    visiblePointCount: 0,
+    line,
+    pointLayer,
+    startMarker,
+    currentMarker,
+    layers: [line, pointLayer, startMarker, currentMarker]
+  });
   renderTrackInfo();
   updateTimeline();
   fitVisibleTracks();
@@ -212,7 +244,9 @@ async function toggleTrack(participant, checkbox, color) {
 function fitVisibleTracks() {
   if (!visibleTracks.size) return;
   const bounds = L.latLngBounds([]);
-  for (const track of visibleTracks.values()) bounds.extend(track.line.getBounds());
+  for (const track of visibleTracks.values()) {
+    track.allLatLngs.forEach(latlng => bounds.extend(latlng));
+  }
   if (bounds.isValid()) map.fitBounds(bounds, {padding: [30, 30]});
 }
 
@@ -252,6 +286,55 @@ function setPlaybackPosition(index) {
   document.getElementById('timelineCursor').value = String(timestamp);
   document.getElementById('timelineCurrent').textContent =
     `נקודה ${playbackIndex + 1} מתוך ${playbackTimestamps.length} · ${formatTimelineTime(timestamp)}`;
+  renderMapAtTime(timestamp);
+}
+
+function visiblePointCountAtTime(points, timestamp) {
+  let low = 0;
+  let high = points.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (points[middle].timestamp <= timestamp) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function renderMapAtTime(timestamp) {
+  for (const track of visibleTracks.values()) {
+    const nextCount = visiblePointCountAtTime(track.timedPoints, timestamp);
+    if (nextCount < track.visiblePointCount) {
+      track.line.setLatLngs([]);
+      track.pointLayer.clearLayers();
+      track.visiblePointCount = 0;
+    }
+
+    for (let index = track.visiblePointCount; index < nextCount; index++) {
+      const point = track.timedPoints[index];
+      track.line.addLatLng(point.latlng);
+      L.circleMarker(point.latlng, {
+        radius: 2,
+        stroke: false,
+        fillColor: track.color,
+        fillOpacity: 0.65,
+        interactive: false
+      }).addTo(track.pointLayer);
+    }
+
+    if (nextCount > 0) {
+      const latest = track.timedPoints[nextCount - 1];
+      if (!map.hasLayer(track.startMarker)) track.startMarker.addTo(map);
+      track.currentMarker
+        .setLatLng(latest.latlng)
+        .bindPopup(`${track.data.displayName}<br>${formatTimelineTime(latest.timestamp)}`);
+      if (!map.hasLayer(track.currentMarker)) track.currentMarker.addTo(map);
+    } else {
+      if (map.hasLayer(track.startMarker)) map.removeLayer(track.startMarker);
+      if (map.hasLayer(track.currentMarker)) map.removeLayer(track.currentMarker);
+    }
+
+    track.visiblePointCount = nextCount;
+  }
 }
 
 function pausePlayback() {
