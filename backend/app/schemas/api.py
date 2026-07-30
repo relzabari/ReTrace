@@ -1,6 +1,10 @@
 import uuid
 from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+ParticipantRole = Literal["רבשץ", "כיתת כוננות", "חמל", "מנהל תרגיל"]
 
 
 class ExerciseCreate(BaseModel):
@@ -11,6 +15,7 @@ class ExerciseCreate(BaseModel):
 class ParticipantCreate(BaseModel):
     display_name: str
     callsign: str | None = None
+    role: ParticipantRole = "כיתת כוננות"
     tracking_mode: str = "CONTINUOUS_GPS"
 
 
@@ -34,3 +39,11 @@ class LocationInput(BaseModel):
 class LocationBatch(BaseModel):
     device_session_id: uuid.UUID
     points: list[LocationInput] = Field(min_length=1, max_length=500)
+
+
+class EventCreate(BaseModel):
+    device_session_id: uuid.UUID
+    occurred_at: datetime
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    description: str = Field(min_length=1, max_length=4000)

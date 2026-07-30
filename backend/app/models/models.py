@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2 import Geography
-from sqlalchemy import BigInteger, DateTime, Enum, Float, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +35,12 @@ class Participant(Base):
     exercise_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("exercises.id", ondelete="CASCADE"), nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
     callsign: Mapped[str | None] = mapped_column(String(120))
+    role: Mapped[str] = mapped_column(
+        String(40),
+        default="כיתת כוננות",
+        server_default="כיתת כוננות",
+        nullable=False,
+    )
     tracking_mode: Mapped[str] = mapped_column(String(32), default="CONTINUOUS_GPS", nullable=False)
 
 
@@ -65,3 +71,34 @@ class LocationPoint(Base):
     speed: Mapped[float | None] = mapped_column(Float)
     heading: Mapped[float | None] = mapped_column(Float)
     battery_level: Mapped[int | None] = mapped_column(Integer)
+
+
+class ExerciseEvent(Base):
+    __tablename__ = "exercise_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    exercise_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("exercises.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    participant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("exercise_participants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    device_session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("device_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    location = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=False)
+    reporter_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    reporter_role: Mapped[str] = mapped_column(String(40), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)

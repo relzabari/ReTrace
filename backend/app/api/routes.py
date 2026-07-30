@@ -8,8 +8,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models.models import DeviceSession, Exercise, ExerciseStatus, LocationPoint, Participant
-from app.schemas.api import DeviceSessionCreate, ExerciseCreate, LocationBatch, ParticipantCreate
+from app.models.models import DeviceSession, Exercise, ExerciseEvent, ExerciseStatus, LocationPoint, Participant
+from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, LocationBatch, ParticipantCreate
 
 router = APIRouter(prefix="/api/v1")
 
@@ -75,6 +75,7 @@ def add_participant(exercise_id: uuid.UUID, payload: ParticipantCreate, db: Sess
         "exerciseId": exercise_id,
         "displayName": participant.display_name,
         "callsign": participant.callsign,
+        "role": participant.role,
         "trackingMode": participant.tracking_mode,
     }
 
@@ -93,6 +94,7 @@ def list_participants(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
                 "id": p.id,
                 "displayName": p.display_name,
                 "callsign": p.callsign,
+                "role": p.role,
                 "trackingMode": p.tracking_mode,
             }
             for p in participants
@@ -180,6 +182,87 @@ def upload_locations(exercise_id: uuid.UUID, payload: LocationBatch, db: Session
     }
 
 
+@router.post("/exercises/{exercise_id}/events", status_code=status.HTTP_201_CREATED)
+def create_event(exercise_id: uuid.UUID, payload: EventCreate, db: Session = Depends(get_db)):
+    exercise = db.get(Exercise, exercise_id)
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    if exercise.status != ExerciseStatus.ACTIVE:
+        raise HTTPException(409, "Exercise is not active")
+
+    device_session = db.get(DeviceSession, payload.device_session_id)
+    if not device_session or device_session.exercise_id != exercise_id:
+        raise HTTPException(404, "Device session not found in exercise")
+    participant = db.get(Participant, device_session.participant_id)
+    if not participant:
+        raise HTTPException(404, "Participant not found in exercise")
+
+    event = ExerciseEvent(
+        exercise_id=exercise_id,
+        participant_id=participant.id,
+        device_session_id=device_session.id,
+        occurred_at=payload.occurred_at,
+        location=ST_SetSRID(ST_MakePoint(payload.longitude, payload.latitude), 4326),
+        reporter_name=participant.display_name,
+        reporter_role=participant.role,
+        description=payload.description.strip(),
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return {
+        "id": event.id,
+        "exerciseId": exercise_id,
+        "occurredAt": event.occurred_at,
+        "latitude": payload.latitude,
+        "longitude": payload.longitude,
+        "reporterName": event.reporter_name,
+        "reporterRole": event.reporter_role,
+        "description": event.description,
+    }
+
+
+@router.get("/exercises/{exercise_id}/events")
+def list_events(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
+    exercise = db.get(Exercise, exercise_id)
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+
+    rows = db.execute(
+        select(
+            ExerciseEvent.id,
+            ExerciseEvent.participant_id,
+            ExerciseEvent.occurred_at,
+            ExerciseEvent.reporter_name,
+            ExerciseEvent.reporter_role,
+            ExerciseEvent.description,
+            ST_AsGeoJSON(ExerciseEvent.location).label("geojson"),
+        )
+        .where(ExerciseEvent.exercise_id == exercise_id)
+        .order_by(ExerciseEvent.occurred_at)
+    ).all()
+
+    import json
+
+    items = []
+    for row in rows:
+        geometry = json.loads(row.geojson)
+        longitude, latitude = geometry["coordinates"][:2]
+        items.append(
+            {
+                "id": row.id,
+                "participantId": row.participant_id,
+                "occurredAt": row.occurred_at,
+                "latitude": latitude,
+                "longitude": longitude,
+                "reporterName": row.reporter_name,
+                "reporterRole": row.reporter_role,
+                "description": row.description,
+            }
+        )
+    return {"items": items}
+
+
 @router.get("/exercises/{exercise_id}/tracks/{participant_id}")
 def get_track(exercise_id: uuid.UUID, participant_id: uuid.UUID, db: Session = Depends(get_db)):
     participant = db.get(Participant, participant_id)
@@ -255,6 +338,7 @@ def map_bootstrap(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
                 "id": p.id,
                 "displayName": p.display_name,
                 "callsign": p.callsign,
+                "role": p.role,
                 "trackingMode": p.tracking_mode,
                 "pointCount": counts.get(p.id, 0),
             }

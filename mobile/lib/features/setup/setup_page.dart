@@ -12,22 +12,28 @@ class SetupPage extends StatefulWidget {
 }
 
 class _SetupPageState extends State<SetupPage> {
+  static const _roles = ['רבשץ', 'כיתת כוננות', 'חמל', 'מנהל תרגיל'];
+
   final _server = TextEditingController(
     text: 'https://retrace-exercise-platform.onrender.com',
   );
   final _exerciseName = TextEditingController(text: 'תרגיל ניסוי GPS');
   final _displayName = TextEditingController(text: 'משתתף 1');
-  final _callsign = TextEditingController(text: 'כוח 1');
   final _existingExercise = TextEditingController();
+  String _selectedRole = 'כיתת כוננות';
   bool _busy = false;
   String? _error;
 
   Future<void> _createAndStart() async {
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
       final api = ApiClient(_server.text.trim());
       final exercise = await api.createExercise(_exerciseName.text.trim());
-      await _continueWithExercise(api, exercise['id'].toString(), startExercise: true);
+      await _continueWithExercise(api, exercise['id'].toString(),
+          startExercise: true);
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -36,10 +42,14 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   Future<void> _joinExisting() async {
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
       final api = ApiClient(_server.text.trim());
-      await _continueWithExercise(api, _existingExercise.text.trim(), startExercise: false);
+      await _continueWithExercise(api, _existingExercise.text.trim(),
+          startExercise: false);
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -47,11 +57,12 @@ class _SetupPageState extends State<SetupPage> {
     }
   }
 
-  Future<void> _continueWithExercise(ApiClient api, String exerciseId, {required bool startExercise}) async {
+  Future<void> _continueWithExercise(ApiClient api, String exerciseId,
+      {required bool startExercise}) async {
     final participant = await api.addParticipant(
       exerciseId: exerciseId,
       displayName: _displayName.text.trim(),
-      callsign: _callsign.text.trim(),
+      role: _selectedRole,
     );
     final session = await api.createDeviceSession(
       exerciseId: exerciseId,
@@ -66,6 +77,7 @@ class _SetupPageState extends State<SetupPage> {
         exerciseId: exerciseId,
         deviceSessionId: session['deviceSessionId'].toString(),
         displayName: _displayName.text.trim(),
+        role: _selectedRole,
       ),
     ));
   }
@@ -77,33 +89,72 @@ class _SetupPageState extends State<SetupPage> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const Text('חיבור לשרת', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text('חיבור לשרת',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          TextField(controller: _server, decoration: const InputDecoration(labelText: 'כתובת השרת', border: OutlineInputBorder())),
+          TextField(
+              controller: _server,
+              decoration: const InputDecoration(
+                  labelText: 'כתובת השרת', border: OutlineInputBorder())),
           const SizedBox(height: 18),
-          const Text('פרטי המשתתף', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text('פרטי המשתתף',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          TextField(controller: _displayName, decoration: const InputDecoration(labelText: 'שם', border: OutlineInputBorder())),
+          TextField(
+              controller: _displayName,
+              decoration: const InputDecoration(
+                  labelText: 'שם', border: OutlineInputBorder())),
           const SizedBox(height: 8),
-          TextField(controller: _callsign, decoration: const InputDecoration(labelText: 'אות קריאה', border: OutlineInputBorder())),
+          DropdownButtonFormField<String>(
+            initialValue: _selectedRole,
+            decoration: const InputDecoration(
+              labelText: 'סוג כוח',
+              border: OutlineInputBorder(),
+            ),
+            items: _roles
+                .map((role) => DropdownMenuItem(value: role, child: Text(role)))
+                .toList(),
+            onChanged: _busy
+                ? null
+                : (role) {
+                    if (role != null) setState(() => _selectedRole = role);
+                  },
+          ),
           const SizedBox(height: 24),
           const Divider(),
-          const Text('אפשרות א׳ — צור תרגיל ניסוי חדש', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('אפשרות א׳ — צור תרגיל ניסוי חדש',
+              style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          TextField(controller: _exerciseName, decoration: const InputDecoration(labelText: 'שם התרגיל', border: OutlineInputBorder())),
+          TextField(
+              controller: _exerciseName,
+              decoration: const InputDecoration(
+                  labelText: 'שם התרגיל', border: OutlineInputBorder())),
           const SizedBox(height: 8),
-          FilledButton(onPressed: _busy ? null : _createAndStart, child: const Text('צור, התחל ועבור למעקב')),
+          FilledButton(
+              onPressed: _busy ? null : _createAndStart,
+              child: const Text('צור, התחל ועבור למעקב')),
           const SizedBox(height: 24),
-          const Text('אפשרות ב׳ — הצטרף לתרגיל פעיל קיים', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('אפשרות ב׳ — הצטרף לתרגיל פעיל קיים',
+              style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          TextField(controller: _existingExercise, decoration: const InputDecoration(labelText: 'Exercise ID', border: OutlineInputBorder())),
+          TextField(
+              controller: _existingExercise,
+              decoration: const InputDecoration(
+                  labelText: 'Exercise ID', border: OutlineInputBorder())),
           const SizedBox(height: 8),
-          OutlinedButton(onPressed: _busy ? null : _joinExisting, child: const Text('הצטרף ועבור למעקב')),
-          if (_busy) const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator())),
-          if (_error != null) Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          ),
+          OutlinedButton(
+              onPressed: _busy ? null : _joinExisting,
+              child: const Text('הצטרף ועבור למעקב')),
+          if (_busy)
+            const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator())),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(_error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ),
           const SizedBox(height: 20),
           const Text(
             'שרת ברירת המחדל מאוחסן בענן וזמין מכל רשת באמצעות HTTPS.',

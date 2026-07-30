@@ -3,8 +3,6 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geolocator_android/geolocator_android.dart';
-import 'package:geolocator_apple/geolocator_apple.dart';
 import 'package:http/http.dart' as http;
 
 import '../../data/local_location_store.dart';
@@ -26,18 +24,23 @@ class TrackingSnapshot {
 }
 
 class TrackingService {
-  TrackingService({required this.apiBaseUrl, required this.exerciseId, required this.deviceSessionId});
+  TrackingService(
+      {required this.apiBaseUrl,
+      required this.exerciseId,
+      required this.deviceSessionId});
 
   final String apiBaseUrl;
   final String exerciseId;
   final String deviceSessionId;
   final LocalLocationStore _store = LocalLocationStore();
-  final StreamController<TrackingSnapshot> _status = StreamController.broadcast();
+  final StreamController<TrackingSnapshot> _status =
+      StreamController.broadcast();
   StreamSubscription<Position>? _subscription;
   Timer? _syncTimer;
   int _sequence = DateTime.now().millisecondsSinceEpoch;
   double? _lastAccuracy;
   DateTime? _lastPositionAt;
+  Position? _lastPosition;
   bool _lastSyncOk = true;
 
   Stream<TrackingSnapshot> get status => _status.stream;
@@ -50,7 +53,8 @@ class TrackingService {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
       throw StateError('נדרשת הרשאת מיקום כדי לתעד את התרגיל.');
     }
   }
@@ -91,10 +95,12 @@ class TrackingService {
 
     final settings = _locationSettings();
 
-    _subscription = Geolocator.getPositionStream(locationSettings: settings).listen((position) async {
+    _subscription = Geolocator.getPositionStream(locationSettings: settings)
+        .listen((position) async {
       final sequence = _sequence++;
       _lastAccuracy = position.accuracy;
       _lastPositionAt = position.timestamp;
+      _lastPosition = position;
       await _store.insertPoint({
         'sequence_number': sequence,
         'captured_at': position.timestamp.toUtc().toIso8601String(),
@@ -108,7 +114,8 @@ class TrackingService {
       await _emit();
     });
 
-    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) => syncPending());
+    _syncTimer =
+        Timer.periodic(const Duration(seconds: 10), (_) => syncPending());
     await _emit();
   }
 
@@ -133,15 +140,17 @@ class TrackingService {
 
     final body = {
       'device_session_id': deviceSessionId,
-      'points': pending.map((p) => {
-        'sequence': p['sequence_number'],
-        'captured_at': p['captured_at'],
-        'latitude': p['latitude'],
-        'longitude': p['longitude'],
-        'horizontal_accuracy': p['accuracy'],
-        'speed': p['speed'],
-        'heading': p['heading'],
-      }).toList(),
+      'points': pending
+          .map((p) => {
+                'sequence': p['sequence_number'],
+                'captured_at': p['captured_at'],
+                'latitude': p['latitude'],
+                'longitude': p['longitude'],
+                'horizontal_accuracy': p['accuracy'],
+                'speed': p['speed'],
+                'heading': p['heading'],
+              })
+          .toList(),
     };
 
     try {
@@ -151,7 +160,8 @@ class TrackingService {
         body: jsonEncode(body),
       );
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        await _store.markSynced(pending.map((p) => p['sequence_number'] as int).toList());
+        await _store.markSynced(
+            pending.map((p) => p['sequence_number'] as int).toList());
         _lastSyncOk = true;
       } else {
         _lastSyncOk = false;
@@ -161,6 +171,34 @@ class TrackingService {
       // Offline-first: rows remain PENDING and are retried later.
     }
     await _emit();
+  }
+
+  Future<void> addEvent(String description) async {
+    final trimmedDescription = description.trim();
+    if (trimmedDescription.isEmpty) {
+      throw ArgumentError('יש להזין תיאור לאירוע.');
+    }
+    final position = _lastPosition ??
+        await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.best,
+            timeLimit: Duration(seconds: 15),
+          ),
+        );
+    final response = await http.post(
+      Uri.parse('$apiBaseUrl/api/v1/exercises/$exerciseId/events'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'device_session_id': deviceSessionId,
+        'occurred_at': DateTime.now().toUtc().toIso8601String(),
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'description': trimmedDescription,
+      }),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError('שמירת האירוע נכשלה (${response.statusCode}).');
+    }
   }
 
   Future<void> stop() async {

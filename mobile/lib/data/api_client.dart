@@ -7,7 +7,8 @@ class ApiClient {
 
   Uri _uri(String path) => Uri.parse('$baseUrl/api/v1$path');
 
-  Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> _post(
+      String path, Map<String, dynamic> body) async {
     final response = await http.post(
       _uri(path),
       headers: {'Content-Type': 'application/json'},
@@ -25,11 +26,12 @@ class ApiClient {
   Future<Map<String, dynamic>> addParticipant({
     required String exerciseId,
     required String displayName,
-    String? callsign,
+    required String role,
   }) =>
       _post('/exercises/$exerciseId/participants', {
         'display_name': displayName,
-        'callsign': callsign?.trim().isEmpty == true ? null : callsign,
+        'callsign': null,
+        'role': role,
         'tracking_mode': 'CONTINUOUS_GPS',
       });
 
