@@ -28,7 +28,7 @@
     .timeline-lanes { display:grid; gap:3px; min-height:16px; max-height:64px; overflow-y:auto; margin:0 7px 5px; }
     .timeline-lane { position:relative; height:7px; background:#edf0f2; border-radius:999px; overflow:hidden; }
     .timeline-range { position:absolute; top:0; bottom:0; min-width:4px; border-radius:999px; }
-    .timeline-event { position:absolute; top:50%; width:10px; height:10px; border:2px solid #fff; border-radius:50%; background:#d97706; box-shadow:0 0 0 1px #92400e; transform:translate(-50%, -50%); }
+    .timeline-event { position:absolute; top:50%; width:10px; height:10px; border:2px solid #fff; border-radius:50%; background:#dc2626; box-shadow:0 0 0 1px #991b1b; transform:translate(-50%, -50%); }
     #timelineCursor { display:block; width:100%; margin:0; accent-color:#17202a; }
     .timeline-labels { display:flex; justify-content:space-between; gap:16px; direction:ltr; margin-top:3px; color:#68737d; font-size:12px; font-variant-numeric:tabular-nums; }
     .timeline-empty { padding:8px 0; text-align:center; color:#68737d; font-size:13px; }
@@ -41,6 +41,10 @@
     .track-color { width:12px; height:12px; margin-top:3px; border-radius:50%; background:var(--track-color); flex:0 0 auto; }
     .track-summary { padding:6px 8px 6px 0; border-bottom:1px solid #eee; }
     .track-summary:last-child { border-bottom:0; }
+    .event-availability { display:flex; align-items:center; gap:7px; margin:9px 0 6px; padding:8px 10px; border-radius:8px; background:#f3f4f6; color:#4b5563; font-size:13px; font-weight:700; }
+    .event-availability::before { content:''; width:10px; height:10px; border-radius:50%; background:#9ca3af; flex:0 0 auto; }
+    .event-availability.has-events { background:#fef2f2; color:#991b1b; }
+    .event-availability.has-events::before { background:#dc2626; }
     .track-arrow-icon { background:transparent; border:0; }
     .track-arrow { display:block; width:20px; height:20px; background:var(--arrow-color); clip-path:polygon(50% 0, 100% 100%, 50% 72%, 0 100%); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); transform-origin:50% 50%; }
     @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
@@ -61,6 +65,7 @@
     <div class="card">
       <strong>משתתפים</strong>
       <div class="muted">סמן משתתף כדי להציג את המסלול שלו. ניתן להציג מספר מסלולים יחד.</div>
+      <div id="eventAvailability" class="event-availability">בחר תרגיל כדי לבדוק אם קיימים אירועים</div>
       <div id="participants"></div>
     </div>
     <div class="card">
@@ -121,7 +126,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
-const trackColors = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#be185d', '#4d7c0f'];
+const trackColors = ['#2563eb', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#4d7c0f', '#ca8a04', '#475569'];
 const eventReporterRoles = new Set(['רבשץ', 'חמל', 'מנהל תרגיל']);
 const visibleTracks = new Map();
 const eventMarkerLayer = L.layerGroup().addTo(map);
@@ -155,15 +160,30 @@ async function loadExercise(id) {
   clearEvents();
   clearTracks();
   currentExercise = id;
-  const data = await api(`/exercises/${id}/map-bootstrap`);
+  const [data, eventData] = await Promise.all([
+    api(`/exercises/${id}/map-bootstrap`),
+    api(`/exercises/${id}/events`)
+  ]);
+  if (id !== currentExercise) return;
+  loadedEvents = normalizeEvents(eventData.items);
   document.getElementById('exerciseName').textContent = data.exercise.name;
   document.getElementById('exerciseStatus').textContent = `סטטוס: ${data.exercise.status}`;
   const root = document.getElementById('participants');
   root.innerHTML = '';
   data.participants.forEach((participant, index) => addParticipant(root, participant, trackColors[index % trackColors.length]));
+  renderEventAvailability();
   const eventsCheckbox = document.getElementById('eventsEnabled');
   eventsCheckbox.checked = false;
-  eventsCheckbox.disabled = false;
+  eventsCheckbox.disabled = !loadedEvents.length;
+}
+
+function renderEventAvailability() {
+  const indicator = document.getElementById('eventAvailability');
+  const count = loadedEvents.length;
+  indicator.classList.toggle('has-events', count > 0);
+  indicator.textContent = count > 0
+    ? `התרגיל מכיל אירועים (${count})`
+    : 'התרגיל לא מכיל אירועים';
 }
 
 function clearEvents() {
@@ -171,7 +191,10 @@ function clearEvents() {
   eventMarkerLayer.clearLayers();
   const checkbox = document.getElementById('eventsEnabled');
   checkbox.checked = false;
-  checkbox.disabled = !currentExercise;
+  checkbox.disabled = true;
+  const indicator = document.getElementById('eventAvailability');
+  indicator.classList.remove('has-events');
+  indicator.textContent = 'בודק אם התרגיל מכיל אירועים…';
 }
 
 function normalizeEvents(items) {
@@ -200,7 +223,13 @@ function eventPopup(event) {
 
 function markerForEvent(event) {
   if (!event.marker) {
-    event.marker = L.marker(event.latlng, {title: event.description})
+    event.marker = L.circleMarker(event.latlng, {
+      radius: 9,
+      color: '#fff',
+      weight: 2,
+      fillColor: '#dc2626',
+      fillOpacity: 1
+    })
       .bindPopup(eventPopup(event));
   }
   return event.marker;
@@ -644,7 +673,7 @@ document.getElementById('trailEnabled').onchange = event => {
 document.getElementById('trailLength').onchange = () => {
   if (playbackTimestamps.length) renderMapAtTime(playbackTimestamps[playbackIndex]);
 };
-document.getElementById('eventsEnabled').onchange = async event => {
+document.getElementById('eventsEnabled').onchange = event => {
   const checkbox = event.target;
   const previousTimestamp = playbackTimestamps.length
     ? playbackTimestamps[playbackIndex]
@@ -654,19 +683,7 @@ document.getElementById('eventsEnabled').onchange = async event => {
     updateTimeline(previousTimestamp);
     return;
   }
-  checkbox.disabled = true;
-  const requestedExercise = currentExercise;
-  try {
-    const data = await api(`/exercises/${requestedExercise}/events`);
-    if (requestedExercise !== currentExercise || !checkbox.checked) return;
-    loadedEvents = normalizeEvents(data.items);
-    updateTimeline(previousTimestamp);
-  } catch (error) {
-    checkbox.checked = false;
-    document.getElementById('trackInfo').textContent = `שגיאה בטעינת האירועים: ${error.message}`;
-  } finally {
-    if (requestedExercise === currentExercise) checkbox.disabled = false;
-  }
+  updateTimeline(previousTimestamp);
 };
 document.getElementById('timelineCursor').oninput = event => {
   pausePlayback();
