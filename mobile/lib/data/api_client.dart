@@ -20,6 +20,22 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> _get(String path) async {
+    final response = await http.get(_uri(path));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('HTTP ${response.statusCode}: ${response.body}');
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> listActiveExercises() async {
+    final data = await _get('/exercises');
+    return (data['items'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .where((exercise) => exercise['status'] == 'ACTIVE')
+        .toList();
+  }
+
   Future<Map<String, dynamic>> createExercise(String name) =>
       _post('/exercises', {'name': name, 'timezone': 'Asia/Jerusalem'});
 
@@ -48,4 +64,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> startExercise(String exerciseId) =>
       _post('/exercises/$exerciseId/start', {});
+
+  Future<Map<String, dynamic>> closeExercise(String exerciseId) =>
+      _post('/exercises/$exerciseId/close', {});
 }

@@ -19,10 +19,42 @@ class _SetupPageState extends State<SetupPage> {
   );
   final _exerciseName = TextEditingController(text: 'תרגיל ניסוי GPS');
   final _displayName = TextEditingController(text: 'משתתף 1');
-  final _existingExercise = TextEditingController();
   String _selectedRole = 'כיתת כוננות';
+  List<Map<String, dynamic>> _activeExercises = [];
+  String? _selectedExerciseId;
+  bool _loadingExercises = false;
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadActiveExercises();
+  }
+
+  Future<void> _loadActiveExercises() async {
+    if (_loadingExercises) return;
+    setState(() {
+      _loadingExercises = true;
+      _error = null;
+    });
+    try {
+      final exercises =
+          await ApiClient(_server.text.trim()).listActiveExercises();
+      if (!mounted) return;
+      setState(() {
+        _activeExercises = exercises;
+        if (!exercises.any(
+            (exercise) => exercise['id'].toString() == _selectedExerciseId)) {
+          _selectedExerciseId = null;
+        }
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _loadingExercises = false);
+    }
+  }
 
   Future<void> _createAndStart() async {
     setState(() {
@@ -42,19 +74,80 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   Future<void> _joinExisting() async {
+    final exerciseId = _selectedExerciseId;
+    if (exerciseId == null) {
+      setState(() => _error = 'יש לבחור תרגיל פעיל.');
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
       final api = ApiClient(_server.text.trim());
-      await _continueWithExercise(api, _existingExercise.text.trim(),
-          startExercise: false);
+      await _continueWithExercise(api, exerciseId, startExercise: false);
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _closeSelectedExercise() async {
+    final exerciseId = _selectedExerciseId;
+    if (exerciseId == null) return;
+    final exercise = _activeExercises.firstWhere(
+      (item) => item['id'].toString() == exerciseId,
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('סגירת תרגיל'),
+        content: Text(
+          'לסגור את "${exercise['name']}"? לאחר הסגירה לא יהיה ניתן להצטרף אליו.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('סגור תרגיל'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ApiClient(_server.text.trim()).closeExercise(exerciseId);
+      if (!mounted) return;
+      setState(() => _selectedExerciseId = null);
+      await _loadActiveExercises();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('התרגיל נסגר בהצלחה.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _exerciseLabel(Map<String, dynamic> exercise) {
+    final name = exercise['name'].toString();
+    final rawStart = exercise['actualStart']?.toString();
+    final start =
+        rawStart == null ? null : DateTime.tryParse(rawStart)?.toLocal();
+    if (start == null) return name;
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '$name — ${two(start.day)}/${two(start.month)} ${two(start.hour)}:${two(start.minute)}';
   }
 
   Future<void> _continueWithExercise(ApiClient api, String exerciseId,
@@ -137,14 +230,77 @@ class _SetupPageState extends State<SetupPage> {
           const Text('אפשרות ב׳ — הצטרף לתרגיל פעיל קיים',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          TextField(
-              controller: _existingExercise,
-              decoration: const InputDecoration(
-                  labelText: 'Exercise ID', border: OutlineInputBorder())),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey(
+                    '$_selectedExerciseId-${_activeExercises.map((item) => item['id']).join(',')}',
+                  ),
+                  initialValue: _selectedExerciseId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'תרגיל פעיל',
+                    border: OutlineInputBorder(),
+                  ),
+                  hint: Text(_activeExercises.isEmpty
+                      ? 'אין תרגילים פעילים'
+                      : 'בחר תרגיל'),
+                  items: _activeExercises
+                      .map(
+                        (exercise) => DropdownMenuItem(
+                          value: exercise['id'].toString(),
+                          child: Text(
+                            _exerciseLabel(exercise),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _busy || _loadingExercises
+                      ? null
+                      : (value) => setState(() => _selectedExerciseId = value),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
+                onPressed:
+                    _busy || _loadingExercises ? null : _loadActiveExercises,
+                tooltip: 'רענן תרגילים פעילים',
+                icon: _loadingExercises
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh),
+              ),
+            ],
+          ),
           const SizedBox(height: 8),
-          OutlinedButton(
-              onPressed: _busy ? null : _joinExisting,
-              child: const Text('הצטרף ועבור למעקב')),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _busy || _selectedExerciseId == null
+                      ? null
+                      : _joinExisting,
+                  child: const Text('הצטרף ועבור למעקב'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: _busy || _selectedExerciseId == null
+                      ? null
+                      : _closeSelectedExercise,
+                  icon: const Icon(Icons.lock_outline),
+                  label: const Text('סגור תרגיל'),
+                ),
+              ),
+            ],
+          ),
           if (_busy)
             const Padding(
                 padding: EdgeInsets.all(16),

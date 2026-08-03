@@ -66,6 +66,8 @@ def add_participant(exercise_id: uuid.UUID, payload: ParticipantCreate, db: Sess
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(404, "Exercise not found")
+    if exercise.status in (ExerciseStatus.ENDING, ExerciseStatus.COMPLETED):
+        raise HTTPException(409, "Exercise is closed")
     participant = Participant(exercise_id=exercise_id, **payload.model_dump())
     db.add(participant)
     db.commit()
@@ -104,6 +106,11 @@ def list_participants(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
 
 @router.post("/exercises/{exercise_id}/device-sessions", status_code=status.HTTP_201_CREATED)
 def create_device_session(exercise_id: uuid.UUID, payload: DeviceSessionCreate, db: Session = Depends(get_db)):
+    exercise = db.get(Exercise, exercise_id)
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    if exercise.status in (ExerciseStatus.ENDING, ExerciseStatus.COMPLETED):
+        raise HTTPException(409, "Exercise is closed")
     participant = db.get(Participant, payload.participant_id)
     if not participant or participant.exercise_id != exercise_id:
         raise HTTPException(404, "Participant not found in exercise")
@@ -128,12 +135,24 @@ def start_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(404, "Exercise not found")
-    if exercise.status == ExerciseStatus.ACTIVE:
-        raise HTTPException(409, "Exercise already active")
+    if exercise.status != ExerciseStatus.DRAFT:
+        raise HTTPException(409, "Only a draft exercise can be started")
     exercise.status = ExerciseStatus.ACTIVE
     exercise.actual_start = datetime.now(timezone.utc)
     db.commit()
     return {"exerciseId": exercise.id, "status": exercise.status, "actualStart": exercise.actual_start}
+
+
+@router.post("/exercises/{exercise_id}/close")
+def close_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
+    exercise = db.get(Exercise, exercise_id)
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    if exercise.status != ExerciseStatus.ACTIVE:
+        raise HTTPException(409, "Only an active exercise can be closed")
+    exercise.status = ExerciseStatus.COMPLETED
+    db.commit()
+    return {"exerciseId": exercise.id, "status": exercise.status}
 
 
 @router.post("/exercises/{exercise_id}/locations/batch")
