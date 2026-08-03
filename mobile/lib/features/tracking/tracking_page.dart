@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'event_location_picker_page.dart';
 import 'tracking_service.dart';
 
 class TrackingPage extends StatefulWidget {
@@ -31,7 +32,9 @@ class _TrackingPageState extends State<TrackingPage> {
   Timer? _timer;
   final _eventDescription = TextEditingController();
   bool _eventBusy = false;
+  bool _locationBusy = false;
   String? _eventError;
+  EventLocationSelection? _eventLocation;
 
   bool get _canReportEvents => widget.role != 'כיתת כוננות';
 
@@ -73,15 +76,26 @@ class _TrackingPageState extends State<TrackingPage> {
       setState(() => _eventError = 'יש להזין תיאור לאירוע.');
       return;
     }
+    if (_eventLocation == null) {
+      setState(() => _eventError = 'יש לבחור מיקום לאירוע.');
+      return;
+    }
     FocusScope.of(context).unfocus();
     setState(() {
       _eventBusy = true;
       _eventError = null;
     });
     try {
-      await _service.addEvent(_eventDescription.text);
-      _eventDescription.clear();
+      final location = _eventLocation!;
+      await _service.addEvent(
+        _eventDescription.text,
+        selectedLocation: location.useCurrentLocation
+            ? null
+            : EventCoordinates(location.latitude!, location.longitude!),
+      );
       if (mounted) {
+        _eventDescription.clear();
+        setState(() => _eventLocation = null);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('האירוע נשמר בהצלחה.')),
         );
@@ -90,6 +104,49 @@ class _TrackingPageState extends State<TrackingPage> {
       if (mounted) setState(() => _eventError = error.toString());
     } finally {
       if (mounted) setState(() => _eventBusy = false);
+    }
+  }
+
+  Future<void> _chooseEventLocation() async {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _locationBusy = true;
+      _eventError = null;
+    });
+    try {
+      EventCoordinates initialLocation;
+      final previousLocation = _eventLocation;
+      if (previousLocation != null && !previousLocation.useCurrentLocation) {
+        initialLocation = EventCoordinates(
+          previousLocation.latitude!,
+          previousLocation.longitude!,
+        );
+      } else {
+        try {
+          initialLocation = await _service.currentEventCoordinates();
+        } catch (_) {
+          initialLocation = const EventCoordinates(31.95, 35.13);
+        }
+      }
+      if (!mounted) return;
+      final selection = await Navigator.push<EventLocationSelection>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EventLocationPickerPage(
+            initialLatitude: initialLocation.latitude,
+            initialLongitude: initialLocation.longitude,
+          ),
+        ),
+      );
+      if (selection != null && mounted) {
+        setState(() => _eventLocation = selection);
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _eventError = 'לא ניתן לפתוח את בחירת המיקום: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _locationBusy = false);
     }
   }
 
@@ -173,8 +230,43 @@ class _TrackingPageState extends State<TrackingPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: !_running || _eventBusy || _locationBusy
+                      ? null
+                      : _chooseEventLocation,
+                  icon: _locationBusy
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.map_outlined),
+                  label: Text(
+                    _eventLocation == null ? 'הוסף מיקום' : 'שנה מיקום',
+                  ),
+                ),
+                Text(
+                  _eventLocation == null
+                      ? 'לא נבחר מיקום לאירוע'
+                      : _eventLocation!.useCurrentLocation
+                          ? 'נבחר: מיקום עצמי'
+                          : 'נבחר מיקום על גבי המפה',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _eventLocation == null
+                        ? Theme.of(context).colorScheme.error
+                        : Theme.of(context).colorScheme.primary,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: !_running || _eventBusy ? null : _addEvent,
+                  onPressed: !_running ||
+                          _eventBusy ||
+                          _locationBusy ||
+                          _eventLocation == null
+                      ? null
+                      : _addEvent,
                   icon: _eventBusy
                       ? const SizedBox(
                           width: 18,
@@ -185,7 +277,7 @@ class _TrackingPageState extends State<TrackingPage> {
                   label: const Text('הוסף אירוע'),
                 ),
                 const Text(
-                  'הזמן, המיקום ושם המדווח עם תפקידו יצורפו אוטומטית.',
+                  'הזמן ושם המדווח עם תפקידו יצורפו אוטומטית.',
                   style: TextStyle(fontSize: 12),
                   textAlign: TextAlign.center,
                 ),

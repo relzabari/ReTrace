@@ -23,6 +23,13 @@ class TrackingSnapshot {
   final bool lastSyncOk;
 }
 
+class EventCoordinates {
+  const EventCoordinates(this.latitude, this.longitude);
+
+  final double latitude;
+  final double longitude;
+}
+
 class TrackingService {
   TrackingService(
       {required this.apiBaseUrl,
@@ -173,11 +180,7 @@ class TrackingService {
     await _emit();
   }
 
-  Future<void> addEvent(String description) async {
-    final trimmedDescription = description.trim();
-    if (trimmedDescription.isEmpty) {
-      throw ArgumentError('יש להזין תיאור לאירוע.');
-    }
+  Future<EventCoordinates> currentEventCoordinates() async {
     final position = _lastPosition ??
         await Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(
@@ -185,14 +188,26 @@ class TrackingService {
             timeLimit: Duration(seconds: 15),
           ),
         );
+    return EventCoordinates(position.latitude, position.longitude);
+  }
+
+  Future<void> addEvent(
+    String description, {
+    EventCoordinates? selectedLocation,
+  }) async {
+    final trimmedDescription = description.trim();
+    if (trimmedDescription.isEmpty) {
+      throw ArgumentError('יש להזין תיאור לאירוע.');
+    }
+    final location = selectedLocation ?? await currentEventCoordinates();
     final response = await http.post(
       Uri.parse('$apiBaseUrl/api/v1/exercises/$exerciseId/events'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'device_session_id': deviceSessionId,
         'occurred_at': DateTime.now().toUtc().toIso8601String(),
-        'latitude': position.latitude,
-        'longitude': position.longitude,
+        'latitude': location.latitude,
+        'longitude': location.longitude,
         'description': trimmedDescription,
       }),
     );
