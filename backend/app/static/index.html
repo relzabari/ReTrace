@@ -28,6 +28,7 @@
     .timeline-lanes { display:grid; gap:3px; min-height:16px; max-height:64px; overflow-y:auto; margin:0 7px 5px; }
     .timeline-lane { position:relative; height:7px; background:#edf0f2; border-radius:999px; overflow:hidden; }
     .timeline-range { position:absolute; top:0; bottom:0; min-width:4px; border-radius:999px; }
+    .timeline-event { position:absolute; top:50%; width:10px; height:10px; border:2px solid #fff; border-radius:50%; background:#d97706; box-shadow:0 0 0 1px #92400e; transform:translate(-50%, -50%); }
     #timelineCursor { display:block; width:100%; margin:0; accent-color:#17202a; }
     .timeline-labels { display:flex; justify-content:space-between; gap:16px; direction:ltr; margin-top:3px; color:#68737d; font-size:12px; font-variant-numeric:tabular-nums; }
     .timeline-empty { padding:8px 0; text-align:center; color:#68737d; font-size:13px; }
@@ -95,6 +96,10 @@
           <option value="50">50 נקודות</option>
           <option value="100">100 נקודות</option>
         </select>
+        <label for="eventsEnabled">
+          <input id="eventsEnabled" type="checkbox" disabled />
+          הצג אירועים
+        </label>
       </div>
       <div id="timelineEmpty" class="timeline-empty">בחר מסלול אחד לפחות כדי להציג את ציר הזמן.</div>
       <div id="timelineChart" class="timeline-chart" hidden>
@@ -117,8 +122,11 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 const trackColors = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#be185d', '#4d7c0f'];
+const eventReporterRoles = new Set(['רבשץ', 'חמל', 'מנהל תרגיל']);
 const visibleTracks = new Map();
+const eventMarkerLayer = L.layerGroup().addTo(map);
 let currentExercise = null;
+let loadedEvents = [];
 let playbackTimer = null;
 let playbackTimestamps = [];
 let playbackIndex = 0;
@@ -144,6 +152,7 @@ async function loadExercises() {
 }
 
 async function loadExercise(id) {
+  clearEvents();
   clearTracks();
   currentExercise = id;
   const data = await api(`/exercises/${id}/map-bootstrap`);
@@ -152,6 +161,64 @@ async function loadExercise(id) {
   const root = document.getElementById('participants');
   root.innerHTML = '';
   data.participants.forEach((participant, index) => addParticipant(root, participant, trackColors[index % trackColors.length]));
+  const eventsCheckbox = document.getElementById('eventsEnabled');
+  eventsCheckbox.checked = false;
+  eventsCheckbox.disabled = false;
+}
+
+function clearEvents() {
+  loadedEvents = [];
+  eventMarkerLayer.clearLayers();
+  const checkbox = document.getElementById('eventsEnabled');
+  checkbox.checked = false;
+  checkbox.disabled = !currentExercise;
+}
+
+function normalizeEvents(items) {
+  return items
+    .map(event => ({
+      ...event,
+      timestamp: Date.parse(event.occurredAt),
+      latlng: [event.latitude, event.longitude],
+      marker: null
+    }))
+    .filter(event => Number.isFinite(event.timestamp) && eventReporterRoles.has(event.reporterRole))
+    .sort((first, second) => first.timestamp - second.timestamp);
+}
+
+function eventPopup(event) {
+  const root = document.createElement('div');
+  const title = document.createElement('strong');
+  title.textContent = event.description;
+  const reporter = document.createElement('div');
+  reporter.textContent = `${event.reporterName} — ${event.reporterRole}`;
+  const time = document.createElement('div');
+  time.textContent = formatTimelineTime(event.timestamp);
+  root.append(title, reporter, time);
+  return root;
+}
+
+function markerForEvent(event) {
+  if (!event.marker) {
+    event.marker = L.marker(event.latlng, {title: event.description})
+      .bindPopup(eventPopup(event));
+  }
+  return event.marker;
+}
+
+function renderEventsAtTime(timestamp) {
+  if (!document.getElementById('eventsEnabled').checked) {
+    eventMarkerLayer.clearLayers();
+    return;
+  }
+  for (const event of loadedEvents) {
+    const marker = markerForEvent(event);
+    if (event.timestamp <= timestamp) {
+      if (!eventMarkerLayer.hasLayer(marker)) marker.addTo(eventMarkerLayer);
+    } else if (eventMarkerLayer.hasLayer(marker)) {
+      eventMarkerLayer.removeLayer(marker);
+    }
+  }
 }
 
 function addParticipant(root, participant, color) {
@@ -412,6 +479,7 @@ function renderMapAtTime(timestamp) {
     track.visiblePointCount = nextCount;
     track.visibleStartIndex = nextStartIndex;
   }
+  renderEventsAtTime(timestamp);
 }
 
 function pausePlayback() {
@@ -463,7 +531,7 @@ function findNearestPlaybackIndex(timestamp) {
     : low;
 }
 
-function updateTimeline() {
+function updateTimeline(preserveTimestamp = null) {
   pausePlayback();
   const empty = document.getElementById('timelineEmpty');
   const chart = document.getElementById('timelineChart');
@@ -475,9 +543,13 @@ function updateTimeline() {
   const rateSelect = document.getElementById('playbackRate');
   const trailCheckbox = document.getElementById('trailEnabled');
   const trailSelect = document.getElementById('trailLength');
-  playbackTimestamps = [...visibleTracks.values()]
+  const trackTimestamps = [...visibleTracks.values()]
     .flatMap(track => track.data.points.map(point => Date.parse(point.capturedAt)))
-    .filter(Number.isFinite)
+    .filter(Number.isFinite);
+  const eventTimestamps = document.getElementById('eventsEnabled').checked
+    ? loadedEvents.map(event => event.timestamp)
+    : [];
+  playbackTimestamps = [...trackTimestamps, ...eventTimestamps]
     .sort((first, second) => first - second);
   const ranges = [...visibleTracks.values()].map(track => {
     const timestamps = track.data.points
@@ -491,7 +563,7 @@ function updateTimeline() {
     } : null;
   }).filter(Boolean);
 
-  if (!ranges.length) {
+  if (!playbackTimestamps.length) {
     playbackTimestamps = [];
     playbackIndex = 0;
     empty.hidden = false;
@@ -503,11 +575,12 @@ function updateTimeline() {
     rateSelect.disabled = true;
     trailCheckbox.disabled = true;
     trailSelect.disabled = true;
+    renderEventsAtTime(Number.NEGATIVE_INFINITY);
     return;
   }
 
-  const start = Math.min(...ranges.map(range => range.start));
-  const end = Math.max(...ranges.map(range => range.end));
+  const start = playbackTimestamps[0];
+  const end = playbackTimestamps[playbackTimestamps.length - 1];
   const duration = Math.max(end - start, 1);
   document.getElementById('timelineStart').textContent = formatTimelineTime(start);
   document.getElementById('timelineEnd').textContent = formatTimelineTime(end);
@@ -529,6 +602,20 @@ function updateTimeline() {
     lanes.appendChild(lane);
   });
 
+  if (eventTimestamps.length) {
+    const lane = document.createElement('div');
+    lane.className = 'timeline-lane';
+    lane.setAttribute('aria-label', 'אירועים');
+    loadedEvents.forEach(event => {
+      const marker = document.createElement('span');
+      marker.className = 'timeline-event';
+      marker.style.left = `${((event.timestamp - start) / duration) * 100}%`;
+      marker.title = `${formatTimelineTime(event.timestamp)} — ${event.reporterName}: ${event.description}`;
+      lane.appendChild(marker);
+    });
+    lanes.appendChild(lane);
+  }
+
   empty.hidden = true;
   chart.hidden = false;
   playPauseButton.disabled = false;
@@ -536,7 +623,7 @@ function updateTimeline() {
   rateSelect.disabled = false;
   trailCheckbox.disabled = false;
   trailSelect.disabled = !trailCheckbox.checked;
-  setPlaybackPosition(0);
+  setPlaybackPosition(preserveTimestamp === null ? 0 : findNearestPlaybackIndex(preserveTimestamp));
 }
 
 document.getElementById('playPauseButton').onclick = () => {
@@ -556,6 +643,30 @@ document.getElementById('trailEnabled').onchange = event => {
 };
 document.getElementById('trailLength').onchange = () => {
   if (playbackTimestamps.length) renderMapAtTime(playbackTimestamps[playbackIndex]);
+};
+document.getElementById('eventsEnabled').onchange = async event => {
+  const checkbox = event.target;
+  const previousTimestamp = playbackTimestamps.length
+    ? playbackTimestamps[playbackIndex]
+    : null;
+  if (!checkbox.checked) {
+    eventMarkerLayer.clearLayers();
+    updateTimeline(previousTimestamp);
+    return;
+  }
+  checkbox.disabled = true;
+  const requestedExercise = currentExercise;
+  try {
+    const data = await api(`/exercises/${requestedExercise}/events`);
+    if (requestedExercise !== currentExercise || !checkbox.checked) return;
+    loadedEvents = normalizeEvents(data.items);
+    updateTimeline(previousTimestamp);
+  } catch (error) {
+    checkbox.checked = false;
+    document.getElementById('trackInfo').textContent = `שגיאה בטעינת האירועים: ${error.message}`;
+  } finally {
+    if (requestedExercise === currentExercise) checkbox.disabled = false;
+  }
 };
 document.getElementById('timelineCursor').oninput = event => {
   pausePlayback();
