@@ -40,8 +40,8 @@
     .track-color { width:12px; height:12px; margin-top:3px; border-radius:50%; background:var(--track-color); flex:0 0 auto; }
     .track-summary { padding:6px 8px 6px 0; border-bottom:1px solid #eee; }
     .track-summary:last-child { border-bottom:0; }
-    .track-arrow-icon { position:relative; background:transparent; border:0; }
-    .track-arrow { position:absolute; top:1px; left:7px; width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:16px solid var(--arrow-color); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); transform-origin:0 8px; }
+    .track-arrow-icon { background:transparent; border:0; }
+    .track-arrow { display:block; width:20px; height:20px; background:var(--arrow-color); clip-path:polygon(50% 0, 100% 100%, 50% 72%, 0 100%); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); transform-origin:50% 50%; }
     @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
   </style>
 </head>
@@ -336,8 +336,8 @@ function bearingBetween(from, to) {
 function createArrowIcon(color, bearing) {
   return L.divIcon({
     className: 'track-arrow-icon',
-    iconSize: [14, 18],
-    iconAnchor: [7, 9],
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
     html: `<span class="track-arrow" style="--arrow-color:${color};transform:rotate(${bearing}deg)"></span>`
   });
 }
@@ -357,6 +357,7 @@ function updateTrackArrow(track, startIndex, pointCount) {
         .setLatLng(latest)
         .setIcon(createArrowIcon(track.color, bearingBetween(previous, latest)));
       if (!map.hasLayer(track.arrowMarker)) track.arrowMarker.addTo(map);
+      if (map.hasLayer(track.currentMarker)) map.removeLayer(track.currentMarker);
       return;
     }
     previousIndex--;
