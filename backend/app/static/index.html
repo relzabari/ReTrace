@@ -40,6 +40,8 @@
     .track-color { width:12px; height:12px; margin-top:3px; border-radius:50%; background:var(--track-color); flex:0 0 auto; }
     .track-summary { padding:6px 8px 6px 0; border-bottom:1px solid #eee; }
     .track-summary:last-child { border-bottom:0; }
+    .track-arrow-icon { position:relative; background:transparent; border:0; }
+    .track-arrow { position:absolute; top:1px; left:7px; width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:16px solid var(--arrow-color); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); transform-origin:0 8px; }
     @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
   </style>
 </head>
@@ -235,6 +237,12 @@ async function toggleTrack(participant, checkbox, color) {
     fillOpacity: 1,
     weight: 3
   });
+  const arrowMarker = L.marker(timedPoints[0].latlng, {
+    interactive: false,
+    keyboard: false,
+    zIndexOffset: 1000,
+    icon: createArrowIcon(color, 0)
+  });
   visibleTracks.set(participant.id, {
     data,
     color,
@@ -246,7 +254,8 @@ async function toggleTrack(participant, checkbox, color) {
     pointLayer,
     startMarker,
     currentMarker,
-    layers: [line, pointLayer, startMarker, currentMarker]
+    arrowMarker,
+    layers: [line, pointLayer, startMarker, currentMarker, arrowMarker]
   });
   renderTrackInfo();
   updateTimeline();
@@ -312,6 +321,49 @@ function visiblePointCountAtTime(points, timestamp) {
   return low;
 }
 
+function bearingBetween(from, to) {
+  const toRadians = value => value * Math.PI / 180;
+  const toDegrees = value => value * 180 / Math.PI;
+  const lat1 = toRadians(from[0]);
+  const lat2 = toRadians(to[0]);
+  const longitudeDelta = toRadians(to[1] - from[1]);
+  const y = Math.sin(longitudeDelta) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(longitudeDelta);
+  return (toDegrees(Math.atan2(y, x)) + 360) % 360;
+}
+
+function createArrowIcon(color, bearing) {
+  return L.divIcon({
+    className: 'track-arrow-icon',
+    iconSize: [14, 18],
+    iconAnchor: [7, 9],
+    html: `<span class="track-arrow" style="--arrow-color:${color};transform:rotate(${bearing}deg)"></span>`
+  });
+}
+
+function updateTrackArrow(track, startIndex, pointCount) {
+  if (pointCount < 2) {
+    if (map.hasLayer(track.arrowMarker)) map.removeLayer(track.arrowMarker);
+    return;
+  }
+  const latestIndex = pointCount - 1;
+  let previousIndex = latestIndex - 1;
+  const latest = track.timedPoints[latestIndex].latlng;
+  while (previousIndex >= startIndex) {
+    const previous = track.timedPoints[previousIndex].latlng;
+    if (previous[0] !== latest[0] || previous[1] !== latest[1]) {
+      track.arrowMarker
+        .setLatLng(latest)
+        .setIcon(createArrowIcon(track.color, bearingBetween(previous, latest)));
+      if (!map.hasLayer(track.arrowMarker)) track.arrowMarker.addTo(map);
+      return;
+    }
+    previousIndex--;
+  }
+  if (map.hasLayer(track.arrowMarker)) map.removeLayer(track.arrowMarker);
+}
+
 function renderMapAtTime(timestamp) {
   const trailEnabled = document.getElementById('trailEnabled').checked;
   const trailLength = Number(document.getElementById('trailLength').value);
@@ -329,10 +381,11 @@ function renderMapAtTime(timestamp) {
       const point = track.timedPoints[index];
       track.line.addLatLng(point.latlng);
       L.circleMarker(point.latlng, {
-        radius: 2,
-        stroke: false,
+        radius: 3.5,
+        color: '#fff',
+        weight: 1,
         fillColor: track.color,
-        fillOpacity: 0.65,
+        fillOpacity: 0.9,
         interactive: false
       }).addTo(track.pointLayer);
     }
@@ -348,9 +401,11 @@ function renderMapAtTime(timestamp) {
         .setLatLng(latest.latlng)
         .bindPopup(`${track.data.displayName}<br>${formatTimelineTime(latest.timestamp)}`);
       if (!map.hasLayer(track.currentMarker)) track.currentMarker.addTo(map);
+      updateTrackArrow(track, nextStartIndex, nextCount);
     } else {
       if (map.hasLayer(track.startMarker)) map.removeLayer(track.startMarker);
       if (map.hasLayer(track.currentMarker)) map.removeLayer(track.currentMarker);
+      if (map.hasLayer(track.arrowMarker)) map.removeLayer(track.arrowMarker);
     }
 
     track.visiblePointCount = nextCount;
