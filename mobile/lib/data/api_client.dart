@@ -1,19 +1,14 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+
+import 'auth_session.dart';
 
 class ApiClient {
-  ApiClient(this.baseUrl);
-  final String baseUrl;
-
-  Uri _uri(String path) => Uri.parse('$baseUrl/api/v1$path');
+  ApiClient(this.session);
+  final AuthSession session;
 
   Future<Map<String, dynamic>> _post(
       String path, Map<String, dynamic> body) async {
-    final response = await http.post(
-      _uri(path),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
-    );
+    final response = await session.request('POST', path, body: body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('HTTP ${response.statusCode}: ${response.body}');
     }
@@ -21,7 +16,16 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> _get(String path) async {
-    final response = await http.get(_uri(path));
+    final response = await session.request('GET', path);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('HTTP ${response.statusCode}: ${response.body}');
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> _patch(
+      String path, Map<String, dynamic> body) async {
+    final response = await session.request('PATCH', path, body: body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('HTTP ${response.statusCode}: ${response.body}');
     }
@@ -67,4 +71,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> closeExercise(String exerciseId) =>
       _post('/exercises/$exerciseId/close', {});
+
+  Future<Map<String, dynamic>> renameExercise(String exerciseId, String name) =>
+      _patch('/exercises/$exerciseId', {'name': name});
 }

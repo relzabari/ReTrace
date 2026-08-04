@@ -17,6 +17,25 @@ class ExerciseStatus(str, enum.Enum):
     COMPLETED = "COMPLETED"
 
 
+class UserRole(str, enum.Enum):
+    ADMIN = "ADMIN"
+    MANAGER = "MANAGER"
+    USER = "USER"
+
+
+class AppUser(Base):
+    __tablename__ = "app_users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER, nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class Exercise(Base):
     __tablename__ = "exercises"
 

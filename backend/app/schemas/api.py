@@ -5,6 +5,30 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 ParticipantRole = Literal["רבשץ", "כיתת כוננות", "חמל", "מנהל תרגיל"]
+AppUserRole = Literal["ADMIN", "MANAGER", "USER"]
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=6, max_length=200)
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=10)
+
+
+class UserCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=200)
+    role: AppUserRole = "USER"
+
+
+class UserRoleUpdate(BaseModel):
+    role: AppUserRole
+
+
+class ExerciseUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
 
 
 class ExerciseCreate(BaseModel):

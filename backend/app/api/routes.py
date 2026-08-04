@@ -7,9 +7,10 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user, require_manager
 from app.db.session import get_db
-from app.models.models import DeviceSession, Exercise, ExerciseEvent, ExerciseStatus, LocationPoint, Participant
-from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, LocationBatch, ParticipantCreate
+from app.models.models import AppUser, DeviceSession, Exercise, ExerciseEvent, ExerciseStatus, LocationPoint, Participant, UserRole
+from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, ExerciseUpdate, LocationBatch, ParticipantCreate
 
 router = APIRouter(prefix="/api/v1")
 
@@ -19,7 +20,11 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.post("/exercises", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/exercises",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_manager)],
+)
 def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db)):
     exercise = Exercise(name=payload.name, timezone=payload.timezone)
     db.add(exercise)
@@ -28,7 +33,7 @@ def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db)):
     return {"id": exercise.id, "name": exercise.name, "status": exercise.status}
 
 
-@router.get("/exercises")
+@router.get("/exercises", dependencies=[Depends(get_current_user)])
 def list_exercises(db: Session = Depends(get_db)):
     exercises = db.scalars(select(Exercise).order_by(Exercise.created_at.desc())).all()
     return {
@@ -46,7 +51,7 @@ def list_exercises(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/exercises/{exercise_id}")
+@router.get("/exercises/{exercise_id}", dependencies=[Depends(get_current_user)])
 def get_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
@@ -61,13 +66,39 @@ def get_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/exercises/{exercise_id}/participants", status_code=status.HTTP_201_CREATED)
-def add_participant(exercise_id: uuid.UUID, payload: ParticipantCreate, db: Session = Depends(get_db)):
+@router.patch("/exercises/{exercise_id}", dependencies=[Depends(require_manager)])
+def update_exercise(
+    exercise_id: uuid.UUID,
+    payload: ExerciseUpdate,
+    db: Session = Depends(get_db),
+):
+    exercise = db.get(Exercise, exercise_id)
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    exercise.name = payload.name.strip()
+    db.commit()
+    db.refresh(exercise)
+    return {"id": exercise.id, "name": exercise.name, "status": exercise.status}
+
+
+@router.post(
+    "/exercises/{exercise_id}/participants",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(get_current_user)],
+)
+def add_participant(
+    exercise_id: uuid.UUID,
+    payload: ParticipantCreate,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(404, "Exercise not found")
     if exercise.status in (ExerciseStatus.ENDING, ExerciseStatus.COMPLETED):
         raise HTTPException(409, "Exercise is closed")
+    if exercise.status == ExerciseStatus.DRAFT and current_user.role == UserRole.USER:
+        raise HTTPException(403, "A user can only join an active exercise")
     participant = Participant(exercise_id=exercise_id, **payload.model_dump())
     db.add(participant)
     db.commit()
@@ -82,7 +113,7 @@ def add_participant(exercise_id: uuid.UUID, payload: ParticipantCreate, db: Sess
     }
 
 
-@router.get("/exercises/{exercise_id}/participants")
+@router.get("/exercises/{exercise_id}/participants", dependencies=[Depends(get_current_user)])
 def list_participants(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
@@ -104,13 +135,24 @@ def list_participants(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/exercises/{exercise_id}/device-sessions", status_code=status.HTTP_201_CREATED)
-def create_device_session(exercise_id: uuid.UUID, payload: DeviceSessionCreate, db: Session = Depends(get_db)):
+@router.post(
+    "/exercises/{exercise_id}/device-sessions",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(get_current_user)],
+)
+def create_device_session(
+    exercise_id: uuid.UUID,
+    payload: DeviceSessionCreate,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(404, "Exercise not found")
     if exercise.status in (ExerciseStatus.ENDING, ExerciseStatus.COMPLETED):
         raise HTTPException(409, "Exercise is closed")
+    if exercise.status == ExerciseStatus.DRAFT and current_user.role == UserRole.USER:
+        raise HTTPException(403, "A user can only join an active exercise")
     participant = db.get(Participant, payload.participant_id)
     if not participant or participant.exercise_id != exercise_id:
         raise HTTPException(404, "Participant not found in exercise")
@@ -130,7 +172,7 @@ def create_device_session(exercise_id: uuid.UUID, payload: DeviceSessionCreate, 
     }
 
 
-@router.post("/exercises/{exercise_id}/start")
+@router.post("/exercises/{exercise_id}/start", dependencies=[Depends(require_manager)])
 def start_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
@@ -143,7 +185,7 @@ def start_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     return {"exerciseId": exercise.id, "status": exercise.status, "actualStart": exercise.actual_start}
 
 
-@router.post("/exercises/{exercise_id}/close")
+@router.post("/exercises/{exercise_id}/close", dependencies=[Depends(require_manager)])
 def close_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
@@ -155,7 +197,7 @@ def close_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     return {"exerciseId": exercise.id, "status": exercise.status}
 
 
-@router.post("/exercises/{exercise_id}/locations/batch")
+@router.post("/exercises/{exercise_id}/locations/batch", dependencies=[Depends(get_current_user)])
 def upload_locations(exercise_id: uuid.UUID, payload: LocationBatch, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
@@ -201,7 +243,11 @@ def upload_locations(exercise_id: uuid.UUID, payload: LocationBatch, db: Session
     }
 
 
-@router.post("/exercises/{exercise_id}/events", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/exercises/{exercise_id}/events",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(get_current_user)],
+)
 def create_event(exercise_id: uuid.UUID, payload: EventCreate, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
@@ -241,7 +287,7 @@ def create_event(exercise_id: uuid.UUID, payload: EventCreate, db: Session = Dep
     }
 
 
-@router.get("/exercises/{exercise_id}/events")
+@router.get("/exercises/{exercise_id}/events", dependencies=[Depends(get_current_user)])
 def list_events(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
@@ -282,7 +328,10 @@ def list_events(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     return {"items": items}
 
 
-@router.get("/exercises/{exercise_id}/tracks/{participant_id}")
+@router.get(
+    "/exercises/{exercise_id}/tracks/{participant_id}",
+    dependencies=[Depends(get_current_user)],
+)
 def get_track(exercise_id: uuid.UUID, participant_id: uuid.UUID, db: Session = Depends(get_db)):
     participant = db.get(Participant, participant_id)
     if not participant or participant.exercise_id != exercise_id:
@@ -327,7 +376,7 @@ def get_track(exercise_id: uuid.UUID, participant_id: uuid.UUID, db: Session = D
     }
 
 
-@router.get("/exercises/{exercise_id}/map-bootstrap")
+@router.get("/exercises/{exercise_id}/map-bootstrap", dependencies=[Depends(get_current_user)])
 def map_bootstrap(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:

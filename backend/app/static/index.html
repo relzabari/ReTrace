@@ -8,6 +8,16 @@
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Arial, sans-serif; background: #f4f6f8; color: #17202a; }
+    .protected { display:none !important; }
+    body.authenticated header.protected { display:flex !important; }
+    body.authenticated main.protected { display:grid !important; }
+    #loginScreen { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; direction:rtl; }
+    .login-card { width:min(100%, 420px); padding:24px; border-radius:14px; background:#fff; box-shadow:0 12px 35px #0002; }
+    .login-card h1 { margin-top:0; }
+    .login-card label { display:block; margin:12px 0 5px; font-weight:700; }
+    .login-card input { width:100%; padding:11px; border:1px solid #ccd1d1; border-radius:8px; font-size:15px; }
+    .login-card button { width:100%; margin-top:16px; }
+    .auth-error { min-height:20px; margin-top:10px; color:#b91c1c; font-size:13px; }
     header { padding: 16px 20px; background: #17202a; color: white; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
     header h1 { font-size: 20px; margin: 0 0 0 auto; }
     select, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #ccd1d1; font-size: 14px; }
@@ -47,16 +57,38 @@
     .event-availability.has-events::before { background:#dc2626; }
     .track-arrow-icon { background:transparent; border:0; }
     .track-arrow { display:block; width:20px; height:20px; background:var(--arrow-color); clip-path:polygon(50% 0, 100% 100%, 50% 72%, 0 100%); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); transform-origin:50% 50%; }
+    .user-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:6px; padding:8px 0; border-bottom:1px solid #eee; direction:ltr; }
+    .user-row:last-child { border-bottom:0; }
+    .user-row span { overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+    .user-row select, .user-row button { padding:6px; font-size:12px; }
+    .add-user-grid { display:grid; gap:7px; margin-top:10px; }
+    .add-user-grid input { width:100%; padding:8px; border:1px solid #ccd1d1; border-radius:7px; }
     @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
   </style>
 </head>
 <body>
-<header>
+<section id="loginScreen">
+  <form id="loginForm" class="login-card">
+    <h1>כניסה ל־ReTrace</h1>
+    <label for="loginEmail">כתובת מייל</label>
+    <input id="loginEmail" type="email" autocomplete="username" required />
+    <label for="loginPassword">סיסמה</label>
+    <input id="loginPassword" type="password" autocomplete="current-password" required />
+    <button id="loginButton" type="submit">כניסה</button>
+    <div id="loginError" class="auth-error"></div>
+  </form>
+</section>
+<header class="protected">
   <h1>מערכת תחקור תרגילים — Prototype 0.2</h1>
   <select id="exerciseSelect"><option value="">בחר תרגיל</option></select>
   <button id="refresh">רענן</button>
+  <button id="createExerciseButton" type="button" hidden>תרגיל חדש</button>
+  <button id="renameExerciseButton" type="button" hidden>שנה שם</button>
+  <button id="closeExerciseButton" type="button" hidden>סגור תרגיל</button>
+  <span id="currentUserLabel"></span>
+  <button id="logoutButton" type="button">יציאה</button>
 </header>
-<main>
+<main class="protected">
   <aside>
     <div class="card">
       <strong id="exerciseName">לא נבחר תרגיל</strong>
@@ -71,6 +103,21 @@
     <div class="card">
       <strong>מסלולים מוצגים</strong>
       <div id="trackInfo" class="muted">אין מסלולים מוצגים.</div>
+    </div>
+    <div id="userManagement" class="card" hidden>
+      <strong>ניהול משתמשים</strong>
+      <div class="add-user-grid">
+        <input id="newUserEmail" type="email" placeholder="כתובת מייל" />
+        <input id="newUserPassword" type="password" placeholder="סיסמה זמנית (8 תווים לפחות)" />
+        <select id="newUserRole">
+          <option value="USER">User</option>
+          <option value="MANAGER">Manager</option>
+          <option value="ADMIN">ADMIN</option>
+        </select>
+        <button id="addUserButton" type="button">הוסף משתמש</button>
+      </div>
+      <div id="userManagementError" class="auth-error"></div>
+      <div id="usersList"></div>
     </div>
   </aside>
   <div class="map-area">
@@ -135,11 +182,82 @@ let loadedEvents = [];
 let playbackTimer = null;
 let playbackTimestamps = [];
 let playbackIndex = 0;
+let accessToken = localStorage.getItem('retraceAccessToken');
+let refreshToken = localStorage.getItem('retraceRefreshToken');
+let currentUser = null;
 
-async function api(path) {
-  const response = await fetch('/api/v1' + path);
+async function refreshAccessToken() {
+  if (!refreshToken) return false;
+  const response = await fetch('/api/v1/auth/refresh', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({refresh_token: refreshToken})
+  });
+  if (!response.ok) return false;
+  const data = await response.json();
+  saveSession(data);
+  return true;
+}
+
+async function authenticatedFetch(path, options = {}, retry = true) {
+  const headers = {...(options.headers || {})};
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const response = await fetch(path, {...options, headers});
+  if (response.status === 401 && retry && await refreshAccessToken()) {
+    return authenticatedFetch(path, options, false);
+  }
+  return response;
+}
+
+async function api(path, options = {}) {
+  const response = await authenticatedFetch('/api/v1' + path, options);
   if (!response.ok) throw new Error(await response.text());
+  if (response.status === 204) return null;
   return response.json();
+}
+
+function saveSession(data) {
+  accessToken = data.accessToken;
+  refreshToken = data.refreshToken;
+  currentUser = data.user;
+  localStorage.setItem('retraceAccessToken', accessToken);
+  localStorage.setItem('retraceRefreshToken', refreshToken);
+}
+
+function clearSession() {
+  accessToken = null;
+  refreshToken = null;
+  currentUser = null;
+  localStorage.removeItem('retraceAccessToken');
+  localStorage.removeItem('retraceRefreshToken');
+}
+
+async function initializeAuth() {
+  if (accessToken) {
+    let response = await authenticatedFetch('/api/v1/auth/me');
+    if (response.ok) currentUser = await response.json();
+  }
+  if (!currentUser) {
+    clearSession();
+    document.getElementById('loginScreen').hidden = false;
+    return;
+  }
+  await showAuthenticatedApp();
+}
+
+async function showAuthenticatedApp() {
+  document.getElementById('loginScreen').hidden = true;
+  document.body.classList.add('authenticated');
+  document.getElementById('currentUserLabel').textContent =
+    `${currentUser.email} · ${currentUser.role}`;
+  const management = document.getElementById('userManagement');
+  management.hidden = currentUser.role !== 'ADMIN';
+  const canManageExercises = currentUser.role === 'ADMIN' || currentUser.role === 'MANAGER';
+  document.getElementById('createExerciseButton').hidden = !canManageExercises;
+  document.getElementById('renameExerciseButton').hidden = !canManageExercises;
+  document.getElementById('closeExerciseButton').hidden = !canManageExercises;
+  await loadExercises();
+  if (currentUser.role === 'ADMIN') await loadUsers();
 }
 
 async function loadExercises() {
@@ -694,7 +812,156 @@ document.getElementById('refresh').onclick = async () => {
   await loadExercises();
   if (currentExercise) await loadExercise(currentExercise);
 };
-loadExercises();
+document.getElementById('createExerciseButton').onclick = async () => {
+  const name = prompt('שם התרגיל החדש:');
+  if (!name?.trim()) return;
+  try {
+    const exercise = await api('/exercises', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name.trim(), timezone: 'Asia/Jerusalem'})
+    });
+    await api(`/exercises/${exercise.id}/start`, {method: 'POST'});
+    await loadExercises();
+    document.getElementById('exerciseSelect').value = exercise.id;
+    await loadExercise(exercise.id);
+  } catch (error) {
+    alert(`יצירת התרגיל נכשלה: ${error.message}`);
+  }
+};
+document.getElementById('renameExerciseButton').onclick = async () => {
+  if (!currentExercise) return alert('יש לבחור תרגיל.');
+  const currentName = document.getElementById('exerciseName').textContent;
+  const name = prompt('שם חדש לתרגיל:', currentName);
+  if (!name?.trim()) return;
+  try {
+    await api(`/exercises/${currentExercise}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name.trim()})
+    });
+    await loadExercises();
+    document.getElementById('exerciseSelect').value = currentExercise;
+    document.getElementById('exerciseName').textContent = name.trim();
+  } catch (error) {
+    alert(`שינוי השם נכשל: ${error.message}`);
+  }
+};
+document.getElementById('closeExerciseButton').onclick = async () => {
+  if (!currentExercise) return alert('יש לבחור תרגיל.');
+  if (!confirm('לסגור את התרגיל? לאחר הסגירה לא יהיה ניתן להצטרף אליו.')) return;
+  try {
+    await api(`/exercises/${currentExercise}/close`, {method: 'POST'});
+    await loadExercise(currentExercise);
+    await loadExercises();
+    document.getElementById('exerciseSelect').value = currentExercise;
+  } catch (error) {
+    alert(`סגירת התרגיל נכשלה: ${error.message}`);
+  }
+};
+
+async function loadUsers() {
+  const root = document.getElementById('usersList');
+  const data = await api('/users');
+  root.innerHTML = '';
+  data.items.forEach(user => {
+    const row = document.createElement('div');
+    row.className = 'user-row';
+    const email = document.createElement('span');
+    email.textContent = user.email;
+    email.title = user.email;
+    const role = document.createElement('select');
+    ['USER', 'MANAGER', 'ADMIN'].forEach(value => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      option.selected = user.role === value;
+      role.appendChild(option);
+    });
+    role.onchange = async () => {
+      try {
+        await api(`/users/${user.id}/role`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({role: role.value})
+        });
+        await loadUsers();
+      } catch (error) {
+        document.getElementById('userManagementError').textContent = error.message;
+        role.value = user.role;
+      }
+    };
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'מחק';
+    remove.disabled = user.id === currentUser.id;
+    remove.onclick = async () => {
+      if (!confirm(`למחוק את המשתמש ${user.email}?`)) return;
+      try {
+        await api(`/users/${user.id}`, {method: 'DELETE'});
+        await loadUsers();
+      } catch (error) {
+        document.getElementById('userManagementError').textContent = error.message;
+      }
+    };
+    row.append(email, role, remove);
+    root.appendChild(row);
+  });
+}
+
+document.getElementById('addUserButton').onclick = async () => {
+  const errorRoot = document.getElementById('userManagementError');
+  errorRoot.textContent = '';
+  try {
+    await api('/users', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        email: document.getElementById('newUserEmail').value,
+        password: document.getElementById('newUserPassword').value,
+        role: document.getElementById('newUserRole').value
+      })
+    });
+    document.getElementById('newUserEmail').value = '';
+    document.getElementById('newUserPassword').value = '';
+    await loadUsers();
+  } catch (error) {
+    errorRoot.textContent = error.message;
+  }
+};
+
+document.getElementById('loginForm').onsubmit = async event => {
+  event.preventDefault();
+  const button = document.getElementById('loginButton');
+  const errorRoot = document.getElementById('loginError');
+  button.disabled = true;
+  errorRoot.textContent = '';
+  try {
+    const response = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        email: document.getElementById('loginEmail').value,
+        password: document.getElementById('loginPassword').value
+      })
+    });
+    if (!response.ok) throw new Error('כתובת המייל או הסיסמה שגויות.');
+    saveSession(await response.json());
+    document.getElementById('loginPassword').value = '';
+    await showAuthenticatedApp();
+  } catch (error) {
+    errorRoot.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+};
+
+document.getElementById('logoutButton').onclick = () => {
+  clearSession();
+  location.reload();
+};
+
+initializeAuth();
 </script>
 </body>
 </html>

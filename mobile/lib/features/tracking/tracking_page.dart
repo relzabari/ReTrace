@@ -1,18 +1,19 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../data/auth_session.dart';
 import 'event_location_picker_page.dart';
 import 'tracking_service.dart';
 
 class TrackingPage extends StatefulWidget {
   const TrackingPage({
     super.key,
-    required this.apiBaseUrl,
+    required this.session,
     required this.exerciseId,
     required this.deviceSessionId,
     required this.displayName,
     required this.role,
   });
-  final String apiBaseUrl;
+  final AuthSession session;
   final String exerciseId;
   final String deviceSessionId;
   final String displayName;
@@ -42,7 +43,7 @@ class _TrackingPageState extends State<TrackingPage> {
   void initState() {
     super.initState();
     _service = TrackingService(
-      apiBaseUrl: widget.apiBaseUrl,
+      session: widget.session,
       exerciseId: widget.exerciseId,
       deviceSessionId: widget.deviceSessionId,
     );

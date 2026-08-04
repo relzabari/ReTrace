@@ -15,6 +15,8 @@
     <application
         android:label="exercise_tracker_prototype"
         android:name="${applicationName}"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

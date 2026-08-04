@@ -1,10 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 
+import '../../data/auth_session.dart';
 import '../../data/local_location_store.dart';
 
 class TrackingSnapshot {
@@ -32,11 +31,11 @@ class EventCoordinates {
 
 class TrackingService {
   TrackingService(
-      {required this.apiBaseUrl,
+      {required this.session,
       required this.exerciseId,
       required this.deviceSessionId});
 
-  final String apiBaseUrl;
+  final AuthSession session;
   final String exerciseId;
   final String deviceSessionId;
   final LocalLocationStore _store = LocalLocationStore();
@@ -161,10 +160,10 @@ class TrackingService {
     };
 
     try {
-      final response = await http.post(
-        Uri.parse('$apiBaseUrl/api/v1/exercises/$exerciseId/locations/batch'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
+      final response = await session.request(
+        'POST',
+        '/exercises/$exerciseId/locations/batch',
+        body: body,
       );
       if (response.statusCode >= 200 && response.statusCode < 300) {
         await _store.markSynced(
@@ -200,16 +199,16 @@ class TrackingService {
       throw ArgumentError('יש להזין תיאור לאירוע.');
     }
     final location = selectedLocation ?? await currentEventCoordinates();
-    final response = await http.post(
-      Uri.parse('$apiBaseUrl/api/v1/exercises/$exerciseId/events'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    final response = await session.request(
+      'POST',
+      '/exercises/$exerciseId/events',
+      body: {
         'device_session_id': deviceSessionId,
         'occurred_at': DateTime.now().toUtc().toIso8601String(),
         'latitude': location.latitude,
         'longitude': location.longitude,
         'description': trimmedDescription,
-      }),
+      },
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError('שמירת האירוע נכשלה (${response.statusCode}).');

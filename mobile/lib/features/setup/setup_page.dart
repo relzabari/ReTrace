@@ -2,10 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../data/api_client.dart';
+import '../../data/auth_session.dart';
 import '../tracking/tracking_page.dart';
 
 class SetupPage extends StatefulWidget {
-  const SetupPage({super.key});
+  const SetupPage({
+    super.key,
+    required this.session,
+    required this.onLogout,
+  });
+
+  final AuthSession session;
+  final VoidCallback onLogout;
 
   @override
   State<SetupPage> createState() => _SetupPageState();
@@ -14,9 +22,6 @@ class SetupPage extends StatefulWidget {
 class _SetupPageState extends State<SetupPage> {
   static const _roles = ['רבשץ', 'כיתת כוננות', 'חמל', 'מנהל תרגיל'];
 
-  final _server = TextEditingController(
-    text: 'https://retrace-exercise-platform.onrender.com',
-  );
   final _exerciseName = TextEditingController(text: 'תרגיל ניסוי GPS');
   final _displayName = TextEditingController(text: 'משתתף 1');
   String _selectedRole = 'כיתת כוננות';
@@ -39,8 +44,7 @@ class _SetupPageState extends State<SetupPage> {
       _error = null;
     });
     try {
-      final exercises =
-          await ApiClient(_server.text.trim()).listActiveExercises();
+      final exercises = await ApiClient(widget.session).listActiveExercises();
       if (!mounted) return;
       setState(() {
         _activeExercises = exercises;
@@ -62,7 +66,7 @@ class _SetupPageState extends State<SetupPage> {
       _error = null;
     });
     try {
-      final api = ApiClient(_server.text.trim());
+      final api = ApiClient(widget.session);
       final exercise = await api.createExercise(_exerciseName.text.trim());
       await _continueWithExercise(api, exercise['id'].toString(),
           startExercise: true);
@@ -84,7 +88,7 @@ class _SetupPageState extends State<SetupPage> {
       _error = null;
     });
     try {
-      final api = ApiClient(_server.text.trim());
+      final api = ApiClient(widget.session);
       await _continueWithExercise(api, exerciseId, startExercise: false);
     } catch (e) {
       setState(() => _error = e.toString());
@@ -124,7 +128,7 @@ class _SetupPageState extends State<SetupPage> {
       _error = null;
     });
     try {
-      await ApiClient(_server.text.trim()).closeExercise(exerciseId);
+      await ApiClient(widget.session).closeExercise(exerciseId);
       if (!mounted) return;
       setState(() => _selectedExerciseId = null);
       await _loadActiveExercises();
@@ -133,6 +137,51 @@ class _SetupPageState extends State<SetupPage> {
           const SnackBar(content: Text('התרגיל נסגר בהצלחה.')),
         );
       }
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _renameSelectedExercise() async {
+    final exerciseId = _selectedExerciseId;
+    if (exerciseId == null) return;
+    final exercise = _activeExercises.firstWhere(
+      (item) => item['id'].toString() == exerciseId,
+    );
+    final controller = TextEditingController(text: exercise['name'].toString());
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('שינוי שם התרגיל'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'שם התרגיל'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ביטול'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('שמור'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ApiClient(widget.session).renameExercise(exerciseId, name);
+      await _loadActiveExercises();
+      if (mounted) setState(() => _selectedExerciseId = exerciseId);
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
     } finally {
@@ -166,7 +215,7 @@ class _SetupPageState extends State<SetupPage> {
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => TrackingPage(
-        apiBaseUrl: _server.text.trim(),
+        session: widget.session,
         exerciseId: exerciseId,
         deviceSessionId: session['deviceSessionId'].toString(),
         displayName: _displayName.text.trim(),
@@ -178,17 +227,24 @@ class _SetupPageState extends State<SetupPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Exercise Tracker 0.2')),
+      appBar: AppBar(
+        title: const Text('Exercise Tracker 0.2'),
+        actions: [
+          IconButton(
+            onPressed: widget.onLogout,
+            tooltip: 'יציאה',
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const Text('חיבור לשרת',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          TextField(
-              controller: _server,
-              decoration: const InputDecoration(
-                  labelText: 'כתובת השרת', border: OutlineInputBorder())),
+          Text(
+            '${widget.session.user.email} · ${widget.session.user.role}',
+            style: const TextStyle(fontSize: 13),
+            textAlign: TextAlign.center,
+          ),
           const SizedBox(height: 18),
           const Text('פרטי המשתתף',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
@@ -213,19 +269,21 @@ class _SetupPageState extends State<SetupPage> {
                     if (role != null) setState(() => _selectedRole = role);
                   },
           ),
-          const SizedBox(height: 24),
-          const Divider(),
-          const Text('אפשרות א׳ — צור תרגיל ניסוי חדש',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          TextField(
-              controller: _exerciseName,
-              decoration: const InputDecoration(
-                  labelText: 'שם התרגיל', border: OutlineInputBorder())),
-          const SizedBox(height: 8),
-          FilledButton(
-              onPressed: _busy ? null : _createAndStart,
-              child: const Text('צור, התחל ועבור למעקב')),
+          if (widget.session.user.canManageExercises) ...[
+            const SizedBox(height: 24),
+            const Divider(),
+            const Text('אפשרות א׳ — צור תרגיל ניסוי חדש',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            TextField(
+                controller: _exerciseName,
+                decoration: const InputDecoration(
+                    labelText: 'שם התרגיל', border: OutlineInputBorder())),
+            const SizedBox(height: 8),
+            FilledButton(
+                onPressed: _busy ? null : _createAndStart,
+                child: const Text('צור, התחל ועבור למעקב')),
+          ],
           const SizedBox(height: 24),
           const Text('אפשרות ב׳ — הצטרף לתרגיל פעיל קיים',
               style: TextStyle(fontWeight: FontWeight.bold)),
@@ -278,6 +336,16 @@ class _SetupPageState extends State<SetupPage> {
               ),
             ],
           ),
+          if (widget.session.user.canManageExercises) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _busy || _selectedExerciseId == null
+                  ? null
+                  : _renameSelectedExercise,
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('שנה את שם התרגיל'),
+            ),
+          ],
           const SizedBox(height: 8),
           Row(
             children: [
@@ -289,16 +357,18 @@ class _SetupPageState extends State<SetupPage> {
                   child: const Text('הצטרף ועבור למעקב'),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.tonalIcon(
-                  onPressed: _busy || _selectedExerciseId == null
-                      ? null
-                      : _closeSelectedExercise,
-                  icon: const Icon(Icons.lock_outline),
-                  label: const Text('סגור תרגיל'),
+              if (widget.session.user.canManageExercises) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: _busy || _selectedExerciseId == null
+                        ? null
+                        : _closeSelectedExercise,
+                    icon: const Icon(Icons.lock_outline),
+                    label: const Text('סגור תרגיל'),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
           if (_busy)
@@ -311,11 +381,6 @@ class _SetupPageState extends State<SetupPage> {
               child: Text(_error!,
                   style: TextStyle(color: Theme.of(context).colorScheme.error)),
             ),
-          const SizedBox(height: 20),
-          const Text(
-            'שרת ברירת המחדל מאוחסן בענן וזמין מכל רשת באמצעות HTTPS.',
-            style: TextStyle(fontSize: 12),
-          ),
         ],
       ),
     );

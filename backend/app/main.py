@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from sqlalchemy import text
 
+from app.api.auth_routes import router as auth_router
 from app.api.routes import router
 from app.db.session import Base, engine
 from app.models import models  # noqa: F401
@@ -29,6 +30,7 @@ def startup() -> None:
 
 
 app.include_router(router)
+app.include_router(auth_router)
 
 
 @app.get("/", include_in_schema=False)
