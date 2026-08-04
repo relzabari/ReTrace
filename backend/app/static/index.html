@@ -249,6 +249,10 @@ async function initializeAuth() {
 async function showAuthenticatedApp() {
   document.body.classList.add('authenticated');
   document.getElementById('loginScreen').hidden = true;
+  requestAnimationFrame(() => {
+    map.invalidateSize({pan: false});
+    setTimeout(() => map.invalidateSize({pan: false}), 150);
+  });
   document.getElementById('currentUserLabel').textContent =
     `${currentUser.email} · ${currentUser.role}`;
   const management = document.getElementById('userManagement');
@@ -260,6 +264,9 @@ async function showAuthenticatedApp() {
   await loadExercises();
   if (currentUser.role === 'ADMIN') await loadUsers();
 }
+
+const mapResizeObserver = new ResizeObserver(() => map.invalidateSize({pan: false}));
+mapResizeObserver.observe(document.getElementById('map'));
 
 async function loadExercises() {
   const data = await api('/exercises');
