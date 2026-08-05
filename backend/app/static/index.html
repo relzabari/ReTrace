@@ -56,6 +56,11 @@
     .event-availability::before { content:''; width:10px; height:10px; border-radius:50%; background:#9ca3af; flex:0 0 auto; }
     .event-availability.has-events { background:#fef2f2; color:#991b1b; }
     .event-availability.has-events::before { background:#dc2626; }
+    .event-explosion-icon { background:transparent; border:0; }
+    .event-explosion { display:block; width:20px; height:20px; background:#dc2626; clip-path:polygon(50% 0, 61% 28%, 85% 8%, 76% 38%, 100% 42%, 73% 55%, 91% 82%, 62% 69%, 50% 100%, 39% 70%, 9% 84%, 27% 56%, 0 43%, 26% 38%, 14% 9%, 39% 28%); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 2px #991b1b); }
+    .event-explosion.blinking { animation:eventExplosionBlink .5s steps(1,end) infinite; }
+    @keyframes eventExplosionBlink { 0%, 49% { opacity:1; transform:scale(1.08); } 50%, 100% { opacity:.18; transform:scale(.88); } }
+    .event-live-label { direction:rtl; border:1px solid #dc2626; color:#7f1d1d; font-weight:700; white-space:normal; text-align:right; max-width:220px; }
     .track-arrow-icon { background:transparent; border:0; }
     .track-arrow { display:block; width:20px; height:20px; background:var(--arrow-color); clip-path:polygon(50% 0, 100% 100%, 50% 72%, 0 100%); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); transform-origin:50% 50%; }
     .user-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:6px; padding:8px 0; border-bottom:1px solid #eee; direction:ltr; }
@@ -313,8 +318,8 @@ function renderEventAvailability() {
 }
 
 function clearEvents() {
+  hideAllEvents();
   loadedEvents = [];
-  eventMarkerLayer.clearLayers();
   const checkbox = document.getElementById('eventsEnabled');
   checkbox.checked = false;
   checkbox.disabled = true;
@@ -329,7 +334,8 @@ function normalizeEvents(items) {
       ...event,
       timestamp: Date.parse(event.occurredAt),
       latlng: [event.latitude, event.longitude],
-      marker: null
+      marker: null,
+      revealTimer: null
     }))
     .filter(event => Number.isFinite(event.timestamp) && eventReporterRoles.has(event.reporterRole))
     .sort((first, second) => first.timestamp - second.timestamp);
@@ -349,29 +355,76 @@ function eventPopup(event) {
 
 function markerForEvent(event) {
   if (!event.marker) {
-    event.marker = L.circleMarker(event.latlng, {
-      radius: 9,
-      color: '#fff',
-      weight: 2,
-      fillColor: '#dc2626',
-      fillOpacity: 1
+    event.marker = L.marker(event.latlng, {
+      icon: eventExplosionIcon(false),
+      keyboard: true,
+      title: event.description,
+      zIndexOffset: 900
     })
       .bindPopup(eventPopup(event));
   }
   return event.marker;
 }
 
+function eventExplosionIcon(blinking) {
+  return L.divIcon({
+    className: 'event-explosion-icon',
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+    popupAnchor: [0, -11],
+    html: `<span class="event-explosion${blinking ? ' blinking' : ''}"></span>`
+  });
+}
+
+function startEventReveal(event, marker) {
+  if (event.revealTimer !== null) clearTimeout(event.revealTimer);
+  marker.setIcon(eventExplosionIcon(true));
+  const label = eventPopup(event);
+  marker.bindTooltip(label, {
+    permanent: true,
+    direction: 'top',
+    offset: [0, -12],
+    className: 'event-live-label'
+  }).openTooltip();
+  event.revealTimer = setTimeout(() => {
+    event.revealTimer = null;
+    marker.setIcon(eventExplosionIcon(false));
+    marker.closeTooltip();
+    marker.unbindTooltip();
+  }, 5000);
+}
+
+function resetEventReveal(event) {
+  if (event.revealTimer !== null) {
+    clearTimeout(event.revealTimer);
+    event.revealTimer = null;
+  }
+  if (!event.marker) return;
+  event.marker.setIcon(eventExplosionIcon(false));
+  event.marker.closeTooltip();
+  event.marker.unbindTooltip();
+}
+
+function hideAllEvents() {
+  loadedEvents.forEach(resetEventReveal);
+  eventMarkerLayer.clearLayers();
+}
+
 function renderEventsAtTime(timestamp) {
   if (!document.getElementById('eventsEnabled').checked) {
-    eventMarkerLayer.clearLayers();
+    hideAllEvents();
     return;
   }
   for (const event of loadedEvents) {
     const marker = markerForEvent(event);
     if (event.timestamp <= timestamp) {
-      if (!eventMarkerLayer.hasLayer(marker)) marker.addTo(eventMarkerLayer);
+      if (!eventMarkerLayer.hasLayer(marker)) {
+        marker.addTo(eventMarkerLayer);
+        startEventReveal(event, marker);
+      }
     } else if (eventMarkerLayer.hasLayer(marker)) {
       eventMarkerLayer.removeLayer(marker);
+      resetEventReveal(event);
     }
   }
 }
@@ -805,7 +858,7 @@ document.getElementById('eventsEnabled').onchange = event => {
     ? playbackTimestamps[playbackIndex]
     : null;
   if (!checkbox.checked) {
-    eventMarkerLayer.clearLayers();
+    hideAllEvents();
     updateTimeline(previousTimestamp);
     return;
   }
