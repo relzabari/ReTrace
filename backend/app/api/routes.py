@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import get_current_user, require_manager
 from app.db.session import get_db
 from app.models.models import AppUser, DeviceSession, Exercise, ExerciseEvent, ExerciseStatus, LocationPoint, Participant, UserRole
-from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, ExerciseUpdate, LocationBatch, ParticipantCreate
+from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, ExerciseUpdate, LocationBatch, ParticipantCreate, WebEventCreate
 
 router = APIRouter(prefix="/api/v1")
 
@@ -278,6 +278,50 @@ def create_event(exercise_id: uuid.UUID, payload: EventCreate, db: Session = Dep
     return {
         "id": event.id,
         "exerciseId": exercise_id,
+        "occurredAt": event.occurred_at,
+        "latitude": payload.latitude,
+        "longitude": payload.longitude,
+        "reporterName": event.reporter_name,
+        "reporterRole": event.reporter_role,
+        "description": event.description,
+    }
+
+
+@router.post(
+    "/exercises/{exercise_id}/events/web",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_web_event(
+    exercise_id: uuid.UUID,
+    payload: WebEventCreate,
+    current_user: AppUser = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    description = payload.description.strip()
+    if not description:
+        raise HTTPException(422, "Event description cannot be blank")
+    exercise = db.get(Exercise, exercise_id)
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    if exercise.status != ExerciseStatus.ACTIVE:
+        raise HTTPException(409, "Exercise is not active")
+    event = ExerciseEvent(
+        exercise_id=exercise_id,
+        participant_id=None,
+        device_session_id=None,
+        occurred_at=payload.occurred_at,
+        location=ST_SetSRID(ST_MakePoint(payload.longitude, payload.latitude), 4326),
+        reporter_name=current_user.email,
+        reporter_role=current_user.role.value,
+        description=description,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return {
+        "id": event.id,
+        "exerciseId": exercise_id,
+        "participantId": None,
         "occurredAt": event.occurred_at,
         "latitude": payload.latitude,
         "longitude": payload.longitude,

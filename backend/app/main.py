@@ -27,6 +27,15 @@ def startup() -> None:
                 """
             )
         )
+        connection.execute(
+            text(
+                """
+                ALTER TABLE exercise_events
+                ALTER COLUMN participant_id DROP NOT NULL,
+                ALTER COLUMN device_session_id DROP NOT NULL
+                """
+            )
+        )
 
 
 app.include_router(router)

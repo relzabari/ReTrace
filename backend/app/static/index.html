@@ -31,6 +31,8 @@
     .timeline-header { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:8px; }
     .timeline-current { font-variant-numeric:tabular-nums; color:#425466; font-size:13px; }
     .timeline-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+    .timeline-button-group { display:flex; align-items:center; gap:8px; }
+    .timeline-control-gap { width:18px; flex:0 0 18px; }
     .timeline-controls button { min-width:78px; padding:7px 12px; }
     .timeline-controls button.live-active { color:#fff; background:#b91c1c; border-color:#991b1b; }
     .timeline-controls label { display:flex; align-items:center; gap:6px; font-size:13px; }
@@ -70,6 +72,16 @@
     .user-row select, .user-row button { padding:6px; font-size:12px; }
     .add-user-grid { display:grid; gap:7px; margin-top:10px; }
     .add-user-grid input { width:100%; padding:8px; border:1px solid #ccd1d1; border-radius:7px; }
+    dialog { width:min(92vw, 680px); padding:0; border:0; border-radius:14px; box-shadow:0 18px 55px #0005; }
+    dialog::backdrop { background:#0f172a99; }
+    .event-dialog { padding:20px; }
+    .event-dialog h2 { margin:0 0 14px; }
+    .event-dialog label { display:block; margin-bottom:6px; font-weight:700; }
+    .event-dialog textarea { width:100%; min-height:90px; resize:vertical; padding:10px; border:1px solid #ccd1d1; border-radius:8px; font:inherit; }
+    #eventLocationMap { height:330px; margin-top:14px; border:1px solid #ccd1d1; border-radius:10px; direction:ltr; }
+    .event-location-hint { min-height:20px; margin:7px 0; color:#4b5563; font-size:13px; }
+    .event-dialog-actions { display:flex; justify-content:flex-start; gap:8px; margin-top:12px; }
+    .event-dialog-error { min-height:20px; color:#b91c1c; font-size:13px; }
     @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
   </style>
 </head>
@@ -135,9 +147,15 @@
         <span id="timelineCurrent" class="timeline-current"></span>
       </div>
       <div class="timeline-controls" aria-label="פקדי ניגון">
-        <button id="playPauseButton" type="button" disabled>PLAY</button>
-        <button id="liveViewButton" type="button" disabled>צפייה חיה</button>
-        <button id="stopButton" type="button" disabled>STOP</button>
+        <span class="timeline-button-group">
+          <button id="playPauseButton" type="button" disabled>PLAY</button>
+          <button id="stopButton" type="button" disabled>STOP</button>
+        </span>
+        <span class="timeline-control-gap" aria-hidden="true"></span>
+        <span class="timeline-button-group">
+          <button id="liveViewButton" type="button" disabled>צפייה חיה</button>
+          <button id="addLiveEventButton" type="button" hidden>הוסף אירוע</button>
+        </span>
         <label class="rate-control" for="playbackRate">
           קצב
           <select id="playbackRate" disabled>
@@ -173,6 +191,20 @@
     </section>
   </div>
 </main>
+<dialog id="addEventDialog" aria-labelledby="addEventTitle">
+  <form id="addEventForm" class="event-dialog">
+    <h2 id="addEventTitle">הוסף אירוע</h2>
+    <label for="webEventDescription">תיאור האירוע</label>
+    <textarea id="webEventDescription" maxlength="4000" required></textarea>
+    <div id="eventLocationMap" aria-label="מפה לבחירת מיקום האירוע"></div>
+    <div id="eventLocationHint" class="event-location-hint">לחץ על המפה כדי לבחור את מיקום האירוע.</div>
+    <div id="addEventError" class="event-dialog-error"></div>
+    <div class="event-dialog-actions">
+      <button id="saveWebEventButton" type="submit">שמור אירוע</button>
+      <button id="cancelWebEventButton" type="button">ביטול</button>
+    </div>
+  </form>
+</dialog>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
 const map = L.map('map').setView([31.95, 35.13], 13);
@@ -182,7 +214,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 const trackColors = ['#2563eb', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#4d7c0f', '#ca8a04', '#475569'];
-const eventReporterRoles = new Set(['רבשץ', 'חמל', 'מנהל תרגיל']);
+const eventReporterRoles = new Set(['רבשץ', 'חמל', 'מנהל תרגיל', 'ADMIN', 'MANAGER']);
 const visibleTracks = new Map();
 const eventMarkerLayer = L.layerGroup().addTo(map);
 let currentExercise = null;
@@ -200,6 +232,17 @@ const participantControls = new Map();
 let accessToken = localStorage.getItem('retraceAccessToken');
 let refreshToken = localStorage.getItem('retraceRefreshToken');
 let currentUser = null;
+let eventLocationMap = null;
+let eventLocationMarker = null;
+let selectedEventLatLng = null;
+
+function canReportWebEvent() {
+  return currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'MANAGER');
+}
+
+function updateLiveActionButtons() {
+  document.getElementById('addLiveEventButton').hidden = !(liveViewActive && canReportWebEvent());
+}
 
 async function refreshAccessToken() {
   if (!refreshToken) return false;
@@ -275,6 +318,7 @@ async function showAuthenticatedApp() {
   document.getElementById('createExerciseButton').hidden = !canManageExercises;
   document.getElementById('renameExerciseButton').hidden = !canManageExercises;
   document.getElementById('closeExerciseButton').hidden = !canManageExercises;
+  updateLiveActionButtons();
   await loadExercises();
   if (currentUser.role === 'ADMIN') await loadUsers();
 }
@@ -783,6 +827,7 @@ async function enterLiveView() {
   if (currentExerciseStatus !== 'ACTIVE' || liveViewActive) return;
   pausePlayback();
   liveViewActive = true;
+  updateLiveActionButtons();
   const button = document.getElementById('liveViewButton');
   button.classList.add('live-active');
   button.textContent = 'צפייה חיה ●';
@@ -800,12 +845,92 @@ function leaveLiveView() {
     liveViewTimer = null;
   }
   liveViewActive = false;
+  updateLiveActionButtons();
   liveRefreshRunning = false;
   suppressTrackUpdates = false;
   const button = document.getElementById('liveViewButton');
   button.classList.remove('live-active');
   button.textContent = 'צפייה חיה';
   participantControls.forEach(control => control.checkbox.disabled = false);
+}
+
+function initializeEventLocationMap() {
+  if (eventLocationMap) return;
+  eventLocationMap = L.map('eventLocationMap').setView(map.getCenter(), map.getZoom());
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 20,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(eventLocationMap);
+  eventLocationMap.on('click', event => {
+    selectedEventLatLng = event.latlng;
+    if (eventLocationMarker) eventLocationMarker.setLatLng(event.latlng);
+    else eventLocationMarker = L.marker(event.latlng).addTo(eventLocationMap);
+    document.getElementById('eventLocationHint').textContent =
+      `המיקום שנבחר: ${event.latlng.lat.toFixed(6)}, ${event.latlng.lng.toFixed(6)}`;
+    document.getElementById('addEventError').textContent = '';
+  });
+}
+
+function openWebEventDialog() {
+  if (!liveViewActive || !canReportWebEvent() || currentExerciseStatus !== 'ACTIVE') return;
+  const dialog = document.getElementById('addEventDialog');
+  document.getElementById('webEventDescription').value = '';
+  document.getElementById('addEventError').textContent = '';
+  document.getElementById('eventLocationHint').textContent = 'לחץ על המפה כדי לבחור את מיקום האירוע.';
+  selectedEventLatLng = null;
+  if (eventLocationMarker) {
+    eventLocationMarker.remove();
+    eventLocationMarker = null;
+  }
+  dialog.showModal();
+  initializeEventLocationMap();
+  eventLocationMap.setView(map.getCenter(), map.getZoom());
+  setTimeout(() => eventLocationMap.invalidateSize(), 100);
+  document.getElementById('webEventDescription').focus();
+}
+
+function closeWebEventDialog() {
+  document.getElementById('addEventDialog').close();
+}
+
+async function saveWebEvent(event) {
+  event.preventDefault();
+  const description = document.getElementById('webEventDescription').value.trim();
+  const error = document.getElementById('addEventError');
+  if (!description) {
+    error.textContent = 'יש להזין תיאור לאירוע.';
+    return;
+  }
+  if (!selectedEventLatLng) {
+    error.textContent = 'יש לבחור את מיקום האירוע על גבי המפה.';
+    return;
+  }
+  const saveButton = document.getElementById('saveWebEventButton');
+  saveButton.disabled = true;
+  error.textContent = '';
+  try {
+    await api(`/exercises/${currentExercise}/events/web`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        occurred_at: new Date().toISOString(),
+        latitude: selectedEventLatLng.lat,
+        longitude: selectedEventLatLng.lng,
+        description
+      })
+    });
+    closeWebEventDialog();
+    const eventData = await api(`/exercises/${currentExercise}/events`);
+    mergeLiveEvents(eventData.items);
+    renderEventAvailability();
+    const eventsCheckbox = document.getElementById('eventsEnabled');
+    eventsCheckbox.disabled = false;
+    updateTimeline(null, true);
+  } catch (requestError) {
+    error.textContent = `שמירת האירוע נכשלה: ${requestError.message}`;
+  } finally {
+    saveButton.disabled = false;
+  }
 }
 
 function pausePlayback() {
@@ -967,6 +1092,9 @@ document.getElementById('playPauseButton').onclick = () => {
 };
 document.getElementById('liveViewButton').onclick = enterLiveView;
 document.getElementById('stopButton').onclick = stopPlayback;
+document.getElementById('addLiveEventButton').onclick = openWebEventDialog;
+document.getElementById('addEventForm').onsubmit = saveWebEvent;
+document.getElementById('cancelWebEventButton').onclick = closeWebEventDialog;
 document.getElementById('playbackRate').onchange = () => {
   if (playbackTimer === null) return;
   clearInterval(playbackTimer);

@@ -71,3 +71,10 @@ class EventCreate(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
     description: str = Field(min_length=1, max_length=4000)
+
+
+class WebEventCreate(BaseModel):
+    occurred_at: datetime
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    description: str = Field(min_length=1, max_length=4000)

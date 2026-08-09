@@ -101,14 +101,14 @@ class ExerciseEvent(Base):
         nullable=False,
         index=True,
     )
-    participant_id: Mapped[uuid.UUID] = mapped_column(
+    participant_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("exercise_participants.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
-    device_session_id: Mapped[uuid.UUID] = mapped_column(
+    device_session_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("device_sessions.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
