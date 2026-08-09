@@ -86,8 +86,8 @@
     .danger-button { color:#fff; background:#b91c1c; border-color:#991b1b; }
     .danger-button:disabled { opacity:.45; cursor:not-allowed; }
     .delete-warning { padding:12px; border:1px solid #dc2626; border-radius:8px; background:#fef2f2; color:#7f1d1d; line-height:1.5; }
-    .delete-confirm-name { display:block; margin:12px 0 5px; font-weight:700; }
-    #deleteExerciseConfirmation { width:100%; padding:10px; border:1px solid #ccd1d1; border-radius:8px; font:inherit; }
+    .delete-confirm-checkbox { display:flex; align-items:flex-start; gap:9px; margin:14px 0; font-weight:700; line-height:1.45; cursor:pointer; }
+    .delete-confirm-checkbox input { margin-top:3px; flex:0 0 auto; accent-color:#b91c1c; }
     @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
   </style>
 </head>
@@ -222,10 +222,10 @@
       פעולה זו תמחק לצמיתות את התרגיל ואת כל המשתתפים, נקודות המיקום,
       המסלולים והאירועים המשויכים אליו. לא ניתן לשחזר את הנתונים לאחר המחיקה.
     </p>
-    <label class="delete-confirm-name" for="deleteExerciseConfirmation">
-      כדי לאשר, הקלד בדיוק את שם התרגיל:
+    <label class="delete-confirm-checkbox" for="deleteExerciseConfirmation">
+      <input id="deleteExerciseConfirmation" type="checkbox" />
+      <span id="deleteExerciseConfirmationText"></span>
     </label>
-    <input id="deleteExerciseConfirmation" autocomplete="off" required />
     <div id="deleteExerciseError" class="event-dialog-error"></div>
     <div class="event-dialog-actions">
       <button id="confirmDeleteExerciseButton" class="danger-button" type="submit" disabled>מחק לצמיתות</button>
@@ -1242,7 +1242,9 @@ function openDeleteExerciseDialog() {
   dialog.dataset.exerciseId = currentExercise;
   dialog.dataset.exerciseName = exerciseName;
   document.getElementById('deleteExerciseName').textContent = exerciseName;
-  document.getElementById('deleteExerciseConfirmation').value = '';
+  document.getElementById('deleteExerciseConfirmationText').textContent =
+    `אני מבין שהתרגיל "${exerciseName}" יימחק לצמיתות במלואו.`;
+  document.getElementById('deleteExerciseConfirmation').checked = false;
   document.getElementById('deleteExerciseError').textContent = '';
   document.getElementById('confirmDeleteExerciseButton').disabled = true;
   dialog.showModal();
@@ -1255,20 +1257,19 @@ function closeDeleteExerciseDialog() {
 
 document.getElementById('deleteExerciseButton').onclick = openDeleteExerciseDialog;
 document.getElementById('cancelDeleteExerciseButton').onclick = closeDeleteExerciseDialog;
-document.getElementById('deleteExerciseConfirmation').oninput = event => {
-  const expectedName = document.getElementById('deleteExerciseDialog').dataset.exerciseName;
-  document.getElementById('confirmDeleteExerciseButton').disabled = event.target.value !== expectedName;
+document.getElementById('deleteExerciseConfirmation').onchange = event => {
+  document.getElementById('confirmDeleteExerciseButton').disabled = !event.target.checked;
 };
 document.getElementById('deleteExerciseForm').onsubmit = async event => {
   event.preventDefault();
   const dialog = document.getElementById('deleteExerciseDialog');
   const exerciseId = dialog.dataset.exerciseId;
   const exerciseName = dialog.dataset.exerciseName;
-  const confirmation = document.getElementById('deleteExerciseConfirmation').value;
+  const confirmed = document.getElementById('deleteExerciseConfirmation').checked;
   const errorRoot = document.getElementById('deleteExerciseError');
   const confirmButton = document.getElementById('confirmDeleteExerciseButton');
-  if (!exerciseId || confirmation !== exerciseName) {
-    errorRoot.textContent = 'שם התרגיל שהוקלד אינו תואם.';
+  if (!exerciseId || !confirmed) {
+    errorRoot.textContent = 'יש לאשר שהתרגיל יימחק לצמיתות.';
     return;
   }
   confirmButton.disabled = true;
