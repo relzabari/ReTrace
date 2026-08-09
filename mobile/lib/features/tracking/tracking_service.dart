@@ -184,6 +184,7 @@ class TrackingService {
   Future<String?> exerciseStatus() async {
     try {
       final response = await session.request('GET', '/exercises/$exerciseId');
+      if (response.statusCode == 404) return 'DELETED';
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       return data['status']?.toString();
@@ -215,6 +216,12 @@ class TrackingService {
     } catch (_) {
       return false;
     }
+  }
+
+  Future<void> stopForDeletedExercise() async {
+    _syncTimer?.cancel();
+    await _subscription?.cancel();
+    await _emit();
   }
 
   Future<EventCoordinates> currentEventCoordinates() async {

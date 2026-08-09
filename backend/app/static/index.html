@@ -83,6 +83,11 @@
     .event-location-hint { min-height:20px; margin:7px 0; color:#4b5563; font-size:13px; }
     .event-dialog-actions { display:flex; justify-content:flex-start; gap:8px; margin-top:12px; }
     .event-dialog-error { min-height:20px; color:#b91c1c; font-size:13px; }
+    .danger-button { color:#fff; background:#b91c1c; border-color:#991b1b; }
+    .danger-button:disabled { opacity:.45; cursor:not-allowed; }
+    .delete-warning { padding:12px; border:1px solid #dc2626; border-radius:8px; background:#fef2f2; color:#7f1d1d; line-height:1.5; }
+    .delete-confirm-name { display:block; margin:12px 0 5px; font-weight:700; }
+    #deleteExerciseConfirmation { width:100%; padding:10px; border:1px solid #ccd1d1; border-radius:8px; font:inherit; }
     @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
   </style>
 </head>
@@ -105,6 +110,7 @@
   <button id="createExerciseButton" type="button" hidden>תרגיל חדש</button>
   <button id="renameExerciseButton" type="button" hidden>שנה שם</button>
   <button id="closeExerciseButton" type="button" hidden>סגור תרגיל</button>
+  <button id="deleteExerciseButton" class="danger-button" type="button" hidden>מחק תרגיל</button>
   <span id="currentUserLabel"></span>
   <button id="logoutButton" type="button">יציאה</button>
 </header>
@@ -205,6 +211,25 @@
     <div class="event-dialog-actions">
       <button id="saveWebEventButton" type="submit">שמור אירוע</button>
       <button id="cancelWebEventButton" type="button">ביטול</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="deleteExerciseDialog" aria-labelledby="deleteExerciseTitle">
+  <form id="deleteExerciseForm" class="event-dialog">
+    <h2 id="deleteExerciseTitle">מחיקת תרגיל לצמיתות</h2>
+    <p>התרגיל שנבחר למחיקה: <strong id="deleteExerciseName"></strong></p>
+    <p class="delete-warning">
+      פעולה זו תמחק לצמיתות את התרגיל ואת כל המשתתפים, נקודות המיקום,
+      המסלולים והאירועים המשויכים אליו. לא ניתן לשחזר את הנתונים לאחר המחיקה.
+    </p>
+    <label class="delete-confirm-name" for="deleteExerciseConfirmation">
+      כדי לאשר, הקלד בדיוק את שם התרגיל:
+    </label>
+    <input id="deleteExerciseConfirmation" autocomplete="off" required />
+    <div id="deleteExerciseError" class="event-dialog-error"></div>
+    <div class="event-dialog-actions">
+      <button id="confirmDeleteExerciseButton" class="danger-button" type="submit" disabled>מחק לצמיתות</button>
+      <button id="cancelDeleteExerciseButton" type="button">ביטול</button>
     </div>
   </form>
 </dialog>
@@ -322,6 +347,7 @@ async function showAuthenticatedApp() {
   document.getElementById('createExerciseButton').hidden = !canManageExercises;
   document.getElementById('renameExerciseButton').hidden = !canManageExercises;
   document.getElementById('closeExerciseButton').hidden = !canManageExercises;
+  document.getElementById('deleteExerciseButton').hidden = currentUser.role !== 'ADMIN';
   updateLiveActionButtons();
   await loadExercises();
   if (currentUser.role === 'ADMIN') await loadUsers();
@@ -1205,6 +1231,74 @@ document.getElementById('closeExerciseButton').onclick = async () => {
     document.getElementById('exerciseSelect').value = currentExercise;
   } catch (error) {
     alert(`סגירת התרגיל נכשלה: ${error.message}`);
+  }
+};
+
+function openDeleteExerciseDialog() {
+  if (currentUser?.role !== 'ADMIN') return;
+  if (!currentExercise) return alert('יש לבחור תרגיל.');
+  const exerciseName = document.getElementById('exerciseName').textContent;
+  const dialog = document.getElementById('deleteExerciseDialog');
+  dialog.dataset.exerciseId = currentExercise;
+  dialog.dataset.exerciseName = exerciseName;
+  document.getElementById('deleteExerciseName').textContent = exerciseName;
+  document.getElementById('deleteExerciseConfirmation').value = '';
+  document.getElementById('deleteExerciseError').textContent = '';
+  document.getElementById('confirmDeleteExerciseButton').disabled = true;
+  dialog.showModal();
+  document.getElementById('deleteExerciseConfirmation').focus();
+}
+
+function closeDeleteExerciseDialog() {
+  document.getElementById('deleteExerciseDialog').close();
+}
+
+document.getElementById('deleteExerciseButton').onclick = openDeleteExerciseDialog;
+document.getElementById('cancelDeleteExerciseButton').onclick = closeDeleteExerciseDialog;
+document.getElementById('deleteExerciseConfirmation').oninput = event => {
+  const expectedName = document.getElementById('deleteExerciseDialog').dataset.exerciseName;
+  document.getElementById('confirmDeleteExerciseButton').disabled = event.target.value !== expectedName;
+};
+document.getElementById('deleteExerciseForm').onsubmit = async event => {
+  event.preventDefault();
+  const dialog = document.getElementById('deleteExerciseDialog');
+  const exerciseId = dialog.dataset.exerciseId;
+  const exerciseName = dialog.dataset.exerciseName;
+  const confirmation = document.getElementById('deleteExerciseConfirmation').value;
+  const errorRoot = document.getElementById('deleteExerciseError');
+  const confirmButton = document.getElementById('confirmDeleteExerciseButton');
+  if (!exerciseId || confirmation !== exerciseName) {
+    errorRoot.textContent = 'שם התרגיל שהוקלד אינו תואם.';
+    return;
+  }
+  confirmButton.disabled = true;
+  errorRoot.textContent = '';
+  try {
+    await api(`/exercises/${exerciseId}`, {method: 'DELETE'});
+    closeDeleteExerciseDialog();
+    leaveLiveView();
+    pausePlayback();
+    clearEvents();
+    clearTracks();
+    currentExercise = null;
+    currentExerciseStatus = null;
+    currentExerciseCreatedAt = null;
+    exerciseParticipants = [];
+    participantControls.clear();
+    document.getElementById('exerciseSelect').value = '';
+    document.getElementById('exerciseName').textContent = 'לא נבחר תרגיל';
+    document.getElementById('exerciseStatus').textContent = '';
+    document.getElementById('participants').innerHTML = '';
+    document.getElementById('trackInfo').textContent = 'אין מסלולים מוצגים.';
+    document.getElementById('eventAvailability').textContent = 'בחר תרגיל כדי לבדוק אם קיימים אירועים';
+    document.getElementById('eventAvailability').classList.remove('has-events');
+    document.getElementById('liveViewButton').disabled = true;
+    updateTimeline();
+    await loadExercises();
+    alert(`התרגיל "${exerciseName}" וכל הנתונים המשויכים אליו נמחקו לצמיתות.`);
+  } catch (error) {
+    errorRoot.textContent = `מחיקת התרגיל נכשלה: ${error.message}`;
+    confirmButton.disabled = false;
   }
 };
 

@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_user, require_manager
+from app.core.auth import get_current_user, require_admin, require_manager
 from app.db.session import get_db
 from app.models.models import AppUser, DeviceSession, Exercise, ExerciseEvent, ExerciseStatus, LocationPoint, Participant, UserRole
 from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, ExerciseUpdate, LocationBatch, ParticipantCreate, WebEventCreate
@@ -123,6 +123,19 @@ def update_exercise(
     db.commit()
     db.refresh(exercise)
     return {"id": exercise.id, "name": exercise.name, "status": exercise.status}
+
+
+@router.delete(
+    "/exercises/{exercise_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin)],
+)
+def delete_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+    exercise = db.get(Exercise, exercise_id)
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    db.delete(exercise)
+    db.commit()
 
 
 @router.post(

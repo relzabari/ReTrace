@@ -92,20 +92,21 @@ class _TrackingPageState extends State<TrackingPage> {
     _statusCheckRunning = true;
     try {
       final status = await _service.exerciseStatus();
-      if (status == 'ENDING' || status == 'COMPLETED') {
-        await _handleExerciseClosure();
+      if (status == 'ENDING' || status == 'COMPLETED' || status == 'DELETED') {
+        await _handleExerciseClosure(deleted: status == 'DELETED');
       }
     } finally {
       _statusCheckRunning = false;
     }
   }
 
-  Future<void> _handleExerciseClosure() async {
+  Future<void> _handleExerciseClosure({bool deleted = false}) async {
     if (_handlingExerciseClosure || _exerciseClosed) return;
     _handlingExerciseClosure = true;
     _exerciseStatusTimer?.cancel();
     _timer?.cancel();
-    final synced = await _service.finishForExerciseClosure();
+    final synced = deleted ? false : await _service.finishForExerciseClosure();
+    if (deleted) await _service.stopForDeletedExercise();
     if (!mounted) return;
     setState(() {
       _running = false;
@@ -116,11 +117,13 @@ class _TrackingPageState extends State<TrackingPage> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text('התרגיל נסגר'),
+        title: Text(deleted ? 'התרגיל נמחק' : 'התרגיל נסגר'),
         content: Text(
-          synced
-              ? 'התרגיל נסגר על ידי מנהל התרגיל. כל הנקודות האחרונות סונכרנו והמעקב הופסק.'
-              : 'התרגיל נסגר על ידי מנהל התרגיל והמעקב הופסק. לא ניתן היה לסנכרן את כל הנקודות האחרונות.',
+          deleted
+              ? 'התרגיל נמחק לצמיתות על ידי מנהל המערכת. המעקב הופסק ולא ניתן לסנכרן אליו נקודות נוספות.'
+              : synced
+                  ? 'התרגיל נסגר על ידי מנהל התרגיל. כל הנקודות האחרונות סונכרנו והמעקב הופסק.'
+                  : 'התרגיל נסגר על ידי מנהל התרגיל והמעקב הופסק. לא ניתן היה לסנכרן את כל הנקודות האחרונות.',
         ),
         actions: [
           FilledButton(
