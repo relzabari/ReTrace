@@ -30,6 +30,22 @@ def startup() -> None:
         connection.execute(
             text(
                 """
+                ALTER TABLE exercises
+                ADD COLUMN IF NOT EXISTS closing_started_at TIMESTAMPTZ
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                ALTER TABLE device_sessions
+                ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
                 ALTER TABLE exercise_events
                 ALTER COLUMN participant_id DROP NOT NULL,
                 ALTER COLUMN device_session_id DROP NOT NULL

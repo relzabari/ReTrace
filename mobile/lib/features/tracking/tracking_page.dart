@@ -33,12 +33,16 @@ class _TrackingPageState extends State<TrackingPage> {
   bool _running = false;
   DateTime? _startedAt;
   Timer? _timer;
+  Timer? _exerciseStatusTimer;
   final _eventDescription = TextEditingController();
   bool _eventBusy = false;
   bool _locationBusy = false;
   String? _eventError;
   EventLocationSelection? _eventLocation;
   late DateTime _eventOccurredAt;
+  bool _handlingExerciseClosure = false;
+  bool _exerciseClosed = false;
+  bool _statusCheckRunning = false;
 
   bool get _canReportEvents => widget.role != 'כיתת כוננות';
 
@@ -55,9 +59,14 @@ class _TrackingPageState extends State<TrackingPage> {
       if (mounted) setState(() => _snapshot = s);
     });
     _start();
+    _exerciseStatusTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _checkExerciseStatus(),
+    );
   }
 
   Future<void> _start() async {
+    if (_exerciseClosed) return;
     try {
       await _service.start();
       _startedAt = DateTime.now();
@@ -74,6 +83,53 @@ class _TrackingPageState extends State<TrackingPage> {
     await _service.stop();
     _timer?.cancel();
     if (mounted) setState(() => _running = false);
+  }
+
+  Future<void> _checkExerciseStatus() async {
+    if (_handlingExerciseClosure || _exerciseClosed || _statusCheckRunning) {
+      return;
+    }
+    _statusCheckRunning = true;
+    try {
+      final status = await _service.exerciseStatus();
+      if (status == 'ENDING' || status == 'COMPLETED') {
+        await _handleExerciseClosure();
+      }
+    } finally {
+      _statusCheckRunning = false;
+    }
+  }
+
+  Future<void> _handleExerciseClosure() async {
+    if (_handlingExerciseClosure || _exerciseClosed) return;
+    _handlingExerciseClosure = true;
+    _exerciseStatusTimer?.cancel();
+    _timer?.cancel();
+    final synced = await _service.finishForExerciseClosure();
+    if (!mounted) return;
+    setState(() {
+      _running = false;
+      _exerciseClosed = true;
+      _handlingExerciseClosure = false;
+    });
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('התרגיל נסגר'),
+        content: Text(
+          synced
+              ? 'התרגיל נסגר על ידי מנהל התרגיל. כל הנקודות האחרונות סונכרנו והמעקב הופסק.'
+              : 'התרגיל נסגר על ידי מנהל התרגיל והמעקב הופסק. לא ניתן היה לסנכרן את כל הנקודות האחרונות.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('אישור'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _addEvent() async {
@@ -223,6 +279,7 @@ class _TrackingPageState extends State<TrackingPage> {
   @override
   void dispose() {
     _timer?.cancel();
+    _exerciseStatusTimer?.cancel();
     _sub?.cancel();
     _service.stop();
     _service.dispose();
@@ -249,11 +306,18 @@ class _TrackingPageState extends State<TrackingPage> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 16)),
               const SizedBox(height: 12),
-              Text(_running ? '● מקליט GPS' : 'המעקב נעצר',
+              Text(
+                  _exerciseClosed
+                      ? 'התרגיל נסגר'
+                      : _running
+                          ? '● מקליט GPS'
+                          : 'המעקב נעצר',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                       fontSize: 20,
-                      color: _running ? Colors.green : Colors.red)),
+                      color: _running && !_exerciseClosed
+                          ? Colors.green
+                          : Colors.red)),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -276,9 +340,11 @@ class _TrackingPageState extends State<TrackingPage> {
                     )
                   else
                     FilledButton.icon(
-                      onPressed: _start,
+                      onPressed: _exerciseClosed ? null : _start,
                       icon: const Icon(Icons.play_circle_outline),
-                      label: const Text('הפעל מחדש'),
+                      label: Text(
+                        _exerciseClosed ? 'התרגיל נסגר' : 'הפעל מחדש',
+                      ),
                     ),
                 ],
               ),

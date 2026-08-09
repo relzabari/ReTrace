@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from geoalchemy2.functions import ST_AsGeoJSON, ST_MakePoint, ST_SetSRID
@@ -15,6 +15,24 @@ from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, Ex
 router = APIRouter(prefix="/api/v1")
 PARTICIPANT_ROLES = {"רבשץ", "כיתת כוננות", "חמל", "מנהל תרגיל"}
 USER_PARTICIPANT_ROLES = {"כיתת כוננות", "חמל"}
+CLOSING_GRACE_PERIOD = timedelta(minutes=2)
+
+
+def maybe_complete_exercise(db: Session, exercise: Exercise) -> bool:
+    if exercise.status != ExerciseStatus.ENDING:
+        return False
+    unfinished_sessions = db.scalar(
+        select(func.count(DeviceSession.id)).where(
+            DeviceSession.exercise_id == exercise.id,
+            DeviceSession.ended_at.is_(None),
+        )
+    )
+    closing_started_at = exercise.closing_started_at or datetime.now(timezone.utc)
+    grace_expired = datetime.now(timezone.utc) >= closing_started_at + CLOSING_GRACE_PERIOD
+    if unfinished_sessions == 0 or grace_expired:
+        exercise.status = ExerciseStatus.COMPLETED
+        return True
+    return False
 
 
 def validate_event_time(occurred_at: datetime, exercise_created_at: datetime) -> None:
@@ -55,6 +73,11 @@ def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db)):
 @router.get("/exercises", dependencies=[Depends(get_current_user)])
 def list_exercises(db: Session = Depends(get_db)):
     exercises = db.scalars(select(Exercise).order_by(Exercise.created_at.desc())).all()
+    statuses_changed = False
+    for exercise in exercises:
+        statuses_changed = maybe_complete_exercise(db, exercise) or statuses_changed
+    if statuses_changed:
+        db.commit()
     return {
         "items": [
             {
@@ -75,6 +98,8 @@ def get_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(404, "Exercise not found")
+    if maybe_complete_exercise(db, exercise):
+        db.commit()
     return {
         "id": exercise.id,
         "name": exercise.name,
@@ -215,7 +240,33 @@ def close_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
         raise HTTPException(404, "Exercise not found")
     if exercise.status != ExerciseStatus.ACTIVE:
         raise HTTPException(409, "Only an active exercise can be closed")
-    exercise.status = ExerciseStatus.COMPLETED
+    exercise.status = ExerciseStatus.ENDING
+    exercise.closing_started_at = datetime.now(timezone.utc)
+    maybe_complete_exercise(db, exercise)
+    db.commit()
+    return {"exerciseId": exercise.id, "status": exercise.status}
+
+
+@router.post(
+    "/exercises/{exercise_id}/device-sessions/{device_session_id}/finish",
+    dependencies=[Depends(get_current_user)],
+)
+def finish_device_session(
+    exercise_id: uuid.UUID,
+    device_session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    exercise = db.get(Exercise, exercise_id)
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    device_session = db.get(DeviceSession, device_session_id)
+    if not device_session or device_session.exercise_id != exercise_id:
+        raise HTTPException(404, "Device session not found in exercise")
+    if exercise.status not in (ExerciseStatus.ENDING, ExerciseStatus.COMPLETED):
+        raise HTTPException(409, "Exercise is not closing")
+    if device_session.ended_at is None:
+        device_session.ended_at = datetime.now(timezone.utc)
+    maybe_complete_exercise(db, exercise)
     db.commit()
     return {"exerciseId": exercise.id, "status": exercise.status}
 
@@ -225,7 +276,9 @@ def upload_locations(exercise_id: uuid.UUID, payload: LocationBatch, db: Session
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(404, "Exercise not found")
-    if exercise.status != ExerciseStatus.ACTIVE:
+    if maybe_complete_exercise(db, exercise):
+        db.commit()
+    if exercise.status not in (ExerciseStatus.ACTIVE, ExerciseStatus.ENDING):
         raise HTTPException(409, "Exercise is not active")
 
     device_session = db.get(DeviceSession, payload.device_session_id)
@@ -450,6 +503,8 @@ def map_bootstrap(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(404, "Exercise not found")
+    if maybe_complete_exercise(db, exercise):
+        db.commit()
 
     participants = db.scalars(
         select(Participant).where(Participant.exercise_id == exercise_id).order_by(Participant.display_name)

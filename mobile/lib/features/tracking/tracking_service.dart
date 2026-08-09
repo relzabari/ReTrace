@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
@@ -178,6 +179,42 @@ class TrackingService {
       // Offline-first: rows remain PENDING and are retried later.
     }
     await _emit();
+  }
+
+  Future<String?> exerciseStatus() async {
+    try {
+      final response = await session.request('GET', '/exercises/$exerciseId');
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return data['status']?.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> finishForExerciseClosure() async {
+    _syncTimer?.cancel();
+    await _subscription?.cancel();
+    final retryUntil = DateTime.now().add(const Duration(seconds: 60));
+    while (await _store.pendingCount(exerciseId) > 0) {
+      final before = await _store.pendingCount(exerciseId);
+      await syncPending();
+      final after = await _store.pendingCount(exerciseId);
+      if (after >= before) {
+        if (DateTime.now().isAfter(retryUntil)) return false;
+        await Future<void>.delayed(const Duration(seconds: 3));
+      }
+    }
+    try {
+      final response = await session.request(
+        'POST',
+        '/exercises/$exerciseId/device-sessions/$deviceSessionId/finish',
+        body: const {},
+      );
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<EventCoordinates> currentEventCoordinates() async {

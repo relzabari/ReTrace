@@ -44,6 +44,7 @@ class Exercise(Base):
     status: Mapped[ExerciseStatus] = mapped_column(Enum(ExerciseStatus), default=ExerciseStatus.DRAFT, nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Jerusalem", nullable=False)
     actual_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -72,6 +73,7 @@ class DeviceSession(Base):
     device_id: Mapped[str] = mapped_column(String(120), nullable=False)
     clock_offset_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class LocationPoint(Base):
