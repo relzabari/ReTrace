@@ -20,11 +20,12 @@ class SetupPage extends StatefulWidget {
 }
 
 class _SetupPageState extends State<SetupPage> {
-  static const _roles = ['רבשץ', 'כיתת כוננות', 'חמל', 'מנהל תרגיל'];
+  static const _allRoles = ['רבשץ', 'כיתת כוננות', 'חמל', 'מנהל תרגיל'];
+  static const _userRoles = ['כיתת כוננות', 'חמל'];
 
   final _exerciseName = TextEditingController(text: 'תרגיל ניסוי GPS');
   final _displayName = TextEditingController(text: 'משתתף 1');
-  String _selectedRole = 'כיתת כוננות';
+  late String _selectedRole;
   List<Map<String, dynamic>> _activeExercises = [];
   String? _selectedExerciseId;
   bool _loadingExercises = false;
@@ -34,8 +35,16 @@ class _SetupPageState extends State<SetupPage> {
   @override
   void initState() {
     super.initState();
+    _selectedRole = switch (widget.session.user.role) {
+      'ADMIN' => 'מנהל תרגיל',
+      'MANAGER' => 'רבשץ',
+      _ => 'כיתת כוננות',
+    };
     _loadActiveExercises();
   }
+
+  List<String> get _availableRoles =>
+      widget.session.user.role == 'USER' ? _userRoles : _allRoles;
 
   Future<void> _loadActiveExercises() async {
     if (_loadingExercises) return;
@@ -268,7 +277,7 @@ class _SetupPageState extends State<SetupPage> {
               labelText: 'סוג כוח',
               border: OutlineInputBorder(),
             ),
-            items: _roles
+            items: _availableRoles
                 .map((role) => DropdownMenuItem(value: role, child: Text(role)))
                 .toList(),
             onChanged: _busy

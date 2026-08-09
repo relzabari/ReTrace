@@ -13,6 +13,8 @@ from app.models.models import AppUser, DeviceSession, Exercise, ExerciseEvent, E
 from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, ExerciseUpdate, LocationBatch, ParticipantCreate, WebEventCreate
 
 router = APIRouter(prefix="/api/v1")
+PARTICIPANT_ROLES = {"רבשץ", "כיתת כוננות", "חמל", "מנהל תרגיל"}
+USER_PARTICIPANT_ROLES = {"כיתת כוננות", "חמל"}
 
 
 def validate_event_time(occurred_at: datetime, exercise_created_at: datetime) -> None:
@@ -116,6 +118,10 @@ def add_participant(
         raise HTTPException(409, "Exercise is closed")
     if exercise.status == ExerciseStatus.DRAFT and current_user.role == UserRole.USER:
         raise HTTPException(403, "A user can only join an active exercise")
+    if payload.role not in PARTICIPANT_ROLES:
+        raise HTTPException(422, "Unknown participant role")
+    if current_user.role == UserRole.USER and payload.role not in USER_PARTICIPANT_ROLES:
+        raise HTTPException(403, "This participant role is not allowed for a USER account")
     participant = Participant(exercise_id=exercise_id, **payload.model_dump())
     db.add(participant)
     db.commit()
