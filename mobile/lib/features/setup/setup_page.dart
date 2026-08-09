@@ -69,7 +69,8 @@ class _SetupPageState extends State<SetupPage> {
       final api = ApiClient(widget.session);
       final exercise = await api.createExercise(_exerciseName.text.trim());
       await _continueWithExercise(api, exercise['id'].toString(),
-          startExercise: true);
+          startExercise: true,
+          exerciseCreatedAt: DateTime.parse(exercise['createdAt'].toString()));
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -89,7 +90,12 @@ class _SetupPageState extends State<SetupPage> {
     });
     try {
       final api = ApiClient(widget.session);
-      await _continueWithExercise(api, exerciseId, startExercise: false);
+      final exercise = _activeExercises.firstWhere(
+        (item) => item['id'].toString() == exerciseId,
+      );
+      await _continueWithExercise(api, exerciseId,
+          startExercise: false,
+          exerciseCreatedAt: DateTime.parse(exercise['createdAt'].toString()));
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -200,7 +206,8 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   Future<void> _continueWithExercise(ApiClient api, String exerciseId,
-      {required bool startExercise}) async {
+      {required bool startExercise,
+      required DateTime exerciseCreatedAt}) async {
     final participant = await api.addParticipant(
       exerciseId: exerciseId,
       displayName: _displayName.text.trim(),
@@ -220,6 +227,7 @@ class _SetupPageState extends State<SetupPage> {
         deviceSessionId: session['deviceSessionId'].toString(),
         displayName: _displayName.text.trim(),
         role: _selectedRole,
+        exerciseCreatedAt: exerciseCreatedAt,
       ),
     ));
   }

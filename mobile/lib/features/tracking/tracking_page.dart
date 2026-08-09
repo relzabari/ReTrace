@@ -12,12 +12,14 @@ class TrackingPage extends StatefulWidget {
     required this.deviceSessionId,
     required this.displayName,
     required this.role,
+    required this.exerciseCreatedAt,
   });
   final AuthSession session;
   final String exerciseId;
   final String deviceSessionId;
   final String displayName;
   final String role;
+  final DateTime exerciseCreatedAt;
 
   @override
   State<TrackingPage> createState() => _TrackingPageState();
@@ -36,12 +38,14 @@ class _TrackingPageState extends State<TrackingPage> {
   bool _locationBusy = false;
   String? _eventError;
   EventLocationSelection? _eventLocation;
+  late DateTime _eventOccurredAt;
 
   bool get _canReportEvents => widget.role != 'כיתת כוננות';
 
   @override
   void initState() {
     super.initState();
+    _eventOccurredAt = DateTime.now();
     _service = TrackingService(
       session: widget.session,
       exerciseId: widget.exerciseId,
@@ -90,13 +94,17 @@ class _TrackingPageState extends State<TrackingPage> {
       final location = _eventLocation!;
       await _service.addEvent(
         _eventDescription.text,
+        occurredAt: _eventOccurredAt,
         selectedLocation: location.useCurrentLocation
             ? null
             : EventCoordinates(location.latitude!, location.longitude!),
       );
       if (mounted) {
         _eventDescription.clear();
-        setState(() => _eventLocation = null);
+        setState(() {
+          _eventLocation = null;
+          _eventOccurredAt = DateTime.now();
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('האירוע נשמר בהצלחה.')),
         );
@@ -149,6 +157,60 @@ class _TrackingPageState extends State<TrackingPage> {
     } finally {
       if (mounted) setState(() => _locationBusy = false);
     }
+  }
+
+  Future<void> _chooseEventDateTime() async {
+    FocusScope.of(context).unfocus();
+    final earliest = widget.exerciseCreatedAt.toLocal();
+    final now = DateTime.now();
+    final initial = _eventOccurredAt.isBefore(earliest)
+        ? earliest
+        : _eventOccurredAt.isAfter(now)
+            ? now
+            : _eventOccurredAt;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(earliest.year, earliest.month, earliest.day),
+      lastDate: DateTime(now.year, now.month, now.day),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null || !mounted) return;
+    var selected =
+        DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    if (selected.isBefore(earliest) &&
+        selected.year == earliest.year &&
+        selected.month == earliest.month &&
+        selected.day == earliest.day &&
+        selected.hour == earliest.hour &&
+        selected.minute == earliest.minute) {
+      selected = earliest;
+    }
+    final currentNow = DateTime.now();
+    if (selected.isBefore(earliest)) {
+      setState(() =>
+          _eventError = 'זמן האירוע לא יכול להיות מוקדם ממועד יצירת התרגיל.');
+      return;
+    }
+    if (selected.isAfter(currentNow)) {
+      setState(
+          () => _eventError = 'זמן האירוע לא יכול להיות מאוחר מהזמן הנוכחי.');
+      return;
+    }
+    setState(() {
+      _eventOccurredAt = selected;
+      _eventError = null;
+    });
+  }
+
+  String get _eventDateTimeLabel {
+    String two(int value) => value.toString().padLeft(2, '0');
+    final value = _eventOccurredAt;
+    return '${two(value.day)}/${two(value.month)}/${value.year}  ${two(value.hour)}:${two(value.minute)}';
   }
 
   String get _elapsed {
@@ -229,6 +291,13 @@ class _TrackingPageState extends State<TrackingPage> {
                     hintText: 'כתוב מה קרה...',
                     border: OutlineInputBorder(),
                   ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed:
+                      !_running || _eventBusy ? null : _chooseEventDateTime,
+                  icon: const Icon(Icons.calendar_month_outlined),
+                  label: Text('תאריך ושעה: $_eventDateTimeLabel'),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(

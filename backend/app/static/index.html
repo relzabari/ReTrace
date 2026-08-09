@@ -78,6 +78,7 @@
     .event-dialog h2 { margin:0 0 14px; }
     .event-dialog label { display:block; margin-bottom:6px; font-weight:700; }
     .event-dialog textarea { width:100%; min-height:90px; resize:vertical; padding:10px; border:1px solid #ccd1d1; border-radius:8px; font:inherit; }
+    .event-dialog input[type="datetime-local"] { width:100%; padding:10px; border:1px solid #ccd1d1; border-radius:8px; font:inherit; direction:ltr; }
     #eventLocationMap { height:330px; margin-top:14px; border:1px solid #ccd1d1; border-radius:10px; direction:ltr; }
     .event-location-hint { min-height:20px; margin:7px 0; color:#4b5563; font-size:13px; }
     .event-dialog-actions { display:flex; justify-content:flex-start; gap:8px; margin-top:12px; }
@@ -196,6 +197,8 @@
     <h2 id="addEventTitle">הוסף אירוע</h2>
     <label for="webEventDescription">תיאור האירוע</label>
     <textarea id="webEventDescription" maxlength="4000" required></textarea>
+    <label for="webEventOccurredAt">תאריך ושעת האירוע</label>
+    <input id="webEventOccurredAt" type="datetime-local" step="1" required />
     <div id="eventLocationMap" aria-label="מפה לבחירת מיקום האירוע"></div>
     <div id="eventLocationHint" class="event-location-hint">לחץ על המפה כדי לבחור את מיקום האירוע.</div>
     <div id="addEventError" class="event-dialog-error"></div>
@@ -219,6 +222,7 @@ const visibleTracks = new Map();
 const eventMarkerLayer = L.layerGroup().addTo(map);
 let currentExercise = null;
 let currentExerciseStatus = null;
+let currentExerciseCreatedAt = null;
 let loadedEvents = [];
 let playbackTimer = null;
 let playbackTimestamps = [];
@@ -352,6 +356,7 @@ async function loadExercise(id) {
   if (id !== currentExercise) return;
   loadedEvents = normalizeEvents(eventData.items);
   currentExerciseStatus = data.exercise.status;
+  currentExerciseCreatedAt = Date.parse(data.exercise.createdAt);
   exerciseParticipants = data.participants;
   document.getElementById('exerciseName').textContent = data.exercise.name;
   document.getElementById('exerciseStatus').textContent = `סטטוס: ${data.exercise.status}`;
@@ -871,10 +876,22 @@ function initializeEventLocationMap() {
   });
 }
 
+function localDateTimeInputValue(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 19);
+}
+
 function openWebEventDialog() {
   if (!liveViewActive || !canReportWebEvent() || currentExerciseStatus !== 'ACTIVE') return;
   const dialog = document.getElementById('addEventDialog');
   document.getElementById('webEventDescription').value = '';
+  const occurredAtInput = document.getElementById('webEventOccurredAt');
+  const now = new Date();
+  occurredAtInput.value = localDateTimeInputValue(now);
+  occurredAtInput.max = localDateTimeInputValue(now);
+  occurredAtInput.min = Number.isFinite(currentExerciseCreatedAt)
+    ? localDateTimeInputValue(new Date(currentExerciseCreatedAt))
+    : '';
   document.getElementById('addEventError').textContent = '';
   document.getElementById('eventLocationHint').textContent = 'לחץ על המפה כדי לבחור את מיקום האירוע.';
   selectedEventLatLng = null;
@@ -896,6 +913,7 @@ function closeWebEventDialog() {
 async function saveWebEvent(event) {
   event.preventDefault();
   const description = document.getElementById('webEventDescription').value.trim();
+  const occurredAt = new Date(document.getElementById('webEventOccurredAt').value);
   const error = document.getElementById('addEventError');
   if (!description) {
     error.textContent = 'יש להזין תיאור לאירוע.';
@@ -903,6 +921,19 @@ async function saveWebEvent(event) {
   }
   if (!selectedEventLatLng) {
     error.textContent = 'יש לבחור את מיקום האירוע על גבי המפה.';
+    return;
+  }
+  const now = new Date();
+  if (!Number.isFinite(occurredAt.getTime())) {
+    error.textContent = 'יש לבחור תאריך ושעה תקינים.';
+    return;
+  }
+  if (Number.isFinite(currentExerciseCreatedAt) && occurredAt.getTime() < currentExerciseCreatedAt) {
+    error.textContent = 'זמן האירוע לא יכול להיות מוקדם ממועד יצירת התרגיל.';
+    return;
+  }
+  if (occurredAt.getTime() > now.getTime()) {
+    error.textContent = 'זמן האירוע לא יכול להיות מאוחר מהזמן הנוכחי.';
     return;
   }
   const saveButton = document.getElementById('saveWebEventButton');
@@ -913,7 +944,7 @@ async function saveWebEvent(event) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        occurred_at: new Date().toISOString(),
+        occurred_at: occurredAt.toISOString(),
         latitude: selectedEventLatLng.lat,
         longitude: selectedEventLatLng.lng,
         description

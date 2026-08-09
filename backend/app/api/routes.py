@@ -15,6 +15,18 @@ from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, Ex
 router = APIRouter(prefix="/api/v1")
 
 
+def validate_event_time(occurred_at: datetime, exercise_created_at: datetime) -> None:
+    if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
+        raise HTTPException(422, "Event time must include a timezone")
+    event_time = occurred_at.astimezone(timezone.utc)
+    created_at = exercise_created_at.astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+    if event_time < created_at:
+        raise HTTPException(422, "Event time cannot be earlier than exercise creation")
+    if event_time > now:
+        raise HTTPException(422, "Event time cannot be later than the current time")
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -30,7 +42,12 @@ def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db)):
     db.add(exercise)
     db.commit()
     db.refresh(exercise)
-    return {"id": exercise.id, "name": exercise.name, "status": exercise.status}
+    return {
+        "id": exercise.id,
+        "name": exercise.name,
+        "status": exercise.status,
+        "createdAt": exercise.created_at,
+    }
 
 
 @router.get("/exercises", dependencies=[Depends(get_current_user)])
@@ -254,6 +271,7 @@ def create_event(exercise_id: uuid.UUID, payload: EventCreate, db: Session = Dep
         raise HTTPException(404, "Exercise not found")
     if exercise.status != ExerciseStatus.ACTIVE:
         raise HTTPException(409, "Exercise is not active")
+    validate_event_time(payload.occurred_at, exercise.created_at)
 
     device_session = db.get(DeviceSession, payload.device_session_id)
     if not device_session or device_session.exercise_id != exercise_id:
@@ -305,6 +323,7 @@ def create_web_event(
         raise HTTPException(404, "Exercise not found")
     if exercise.status != ExerciseStatus.ACTIVE:
         raise HTTPException(409, "Exercise is not active")
+    validate_event_time(payload.occurred_at, exercise.created_at)
     event = ExerciseEvent(
         exercise_id=exercise_id,
         participant_id=None,
@@ -444,6 +463,7 @@ def map_bootstrap(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
             "name": exercise.name,
             "status": exercise.status,
             "actualStart": exercise.actual_start,
+            "createdAt": exercise.created_at,
         },
         "participants": [
             {

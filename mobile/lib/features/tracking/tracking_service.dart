@@ -193,6 +193,7 @@ class TrackingService {
   Future<void> addEvent(
     String description, {
     EventCoordinates? selectedLocation,
+    required DateTime occurredAt,
   }) async {
     final trimmedDescription = description.trim();
     if (trimmedDescription.isEmpty) {
@@ -204,7 +205,7 @@ class TrackingService {
       '/exercises/$exerciseId/events',
       body: {
         'device_session_id': deviceSessionId,
-        'occurred_at': DateTime.now().toUtc().toIso8601String(),
+        'occurred_at': occurredAt.toUtc().toIso8601String(),
         'latitude': location.latitude,
         'longitude': location.longitude,
         'description': trimmedDescription,
