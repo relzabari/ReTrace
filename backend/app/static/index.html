@@ -32,6 +32,7 @@
     .timeline-current { font-variant-numeric:tabular-nums; color:#425466; font-size:13px; }
     .timeline-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
     .timeline-controls button { min-width:78px; padding:7px 12px; }
+    .timeline-controls button.live-active { color:#fff; background:#b91c1c; border-color:#991b1b; }
     .timeline-controls label { display:flex; align-items:center; gap:6px; font-size:13px; }
     .timeline-controls .rate-control { margin-right:auto; }
     .timeline-controls select { padding:7px 10px; }
@@ -135,6 +136,7 @@
       </div>
       <div class="timeline-controls" aria-label="פקדי ניגון">
         <button id="playPauseButton" type="button" disabled>PLAY</button>
+        <button id="liveViewButton" type="button" disabled>צפייה חיה</button>
         <button id="stopButton" type="button" disabled>STOP</button>
         <label class="rate-control" for="playbackRate">
           קצב
@@ -184,10 +186,17 @@ const eventReporterRoles = new Set(['רבשץ', 'חמל', 'מנהל תרגיל']
 const visibleTracks = new Map();
 const eventMarkerLayer = L.layerGroup().addTo(map);
 let currentExercise = null;
+let currentExerciseStatus = null;
 let loadedEvents = [];
 let playbackTimer = null;
 let playbackTimestamps = [];
 let playbackIndex = 0;
+let liveViewTimer = null;
+let liveViewActive = false;
+let liveRefreshRunning = false;
+let suppressTrackUpdates = false;
+let exerciseParticipants = [];
+const participantControls = new Map();
 let accessToken = localStorage.getItem('retraceAccessToken');
 let refreshToken = localStorage.getItem('retraceRefreshToken');
 let currentUser = null;
@@ -288,6 +297,7 @@ async function loadExercises() {
 }
 
 async function loadExercise(id) {
+  leaveLiveView();
   clearEvents();
   clearTracks();
   currentExercise = id;
@@ -297,15 +307,19 @@ async function loadExercise(id) {
   ]);
   if (id !== currentExercise) return;
   loadedEvents = normalizeEvents(eventData.items);
+  currentExerciseStatus = data.exercise.status;
+  exerciseParticipants = data.participants;
   document.getElementById('exerciseName').textContent = data.exercise.name;
   document.getElementById('exerciseStatus').textContent = `סטטוס: ${data.exercise.status}`;
   const root = document.getElementById('participants');
   root.innerHTML = '';
+  participantControls.clear();
   data.participants.forEach((participant, index) => addParticipant(root, participant, trackColors[index % trackColors.length]));
   renderEventAvailability();
   const eventsCheckbox = document.getElementById('eventsEnabled');
   eventsCheckbox.checked = false;
   eventsCheckbox.disabled = !loadedEvents.length;
+  document.getElementById('liveViewButton').disabled = currentExerciseStatus !== 'ACTIVE';
 }
 
 function renderEventAvailability() {
@@ -445,6 +459,7 @@ function addParticipant(root, participant, color) {
   const count = document.createElement('div');
   count.className = 'muted';
   count.textContent = `${participant.pointCount} נקודות GPS`;
+  participantControls.set(participant.id, {participant, checkbox, color, count});
   content.append(name, count);
   label.append(checkbox, dot, content);
   root.appendChild(label);
@@ -462,9 +477,11 @@ async function toggleTrack(participant, checkbox, color) {
     const track = visibleTracks.get(participant.id);
     if (track) track.layers.forEach(layer => map.removeLayer(layer));
     visibleTracks.delete(participant.id);
-    renderTrackInfo();
-    updateTimeline();
-    fitVisibleTracks();
+    if (!suppressTrackUpdates) {
+      renderTrackInfo();
+      updateTimeline();
+      fitVisibleTracks();
+    }
     return;
   }
   checkbox.disabled = true;
@@ -532,9 +549,11 @@ async function toggleTrack(participant, checkbox, color) {
     arrowMarker,
     layers: [line, pointLayer, startMarker, currentMarker, arrowMarker]
   });
-  renderTrackInfo();
-  updateTimeline();
-  fitVisibleTracks();
+  if (!suppressTrackUpdates) {
+    renderTrackInfo();
+    updateTimeline();
+    fitVisibleTracks();
+  }
 }
 
 function fitVisibleTracks() {
@@ -690,6 +709,105 @@ function renderMapAtTime(timestamp) {
   renderEventsAtTime(timestamp);
 }
 
+function mergeLiveEvents(items) {
+  const existing = new Map(loadedEvents.map(event => [event.id, event]));
+  loadedEvents = normalizeEvents(items).map(event => {
+    const previous = existing.get(event.id);
+    return previous ? {...event, marker: previous.marker, revealTimer: previous.revealTimer} : event;
+  });
+}
+
+function fitLivePositions() {
+  const bounds = L.latLngBounds([]);
+  for (const track of visibleTracks.values()) {
+    const latest = track.timedPoints[track.timedPoints.length - 1];
+    if (latest) bounds.extend(latest.latlng);
+  }
+  if (bounds.isValid()) map.fitBounds(bounds, {padding: [45, 45], maxZoom: 17});
+}
+
+async function refreshLiveView() {
+  if (!liveViewActive || liveRefreshRunning || !currentExercise) return;
+  liveRefreshRunning = true;
+  const requestedExercise = currentExercise;
+  try {
+    const bootstrap = await api(`/exercises/${requestedExercise}/map-bootstrap`);
+    if (!liveViewActive || requestedExercise !== currentExercise) return;
+    currentExerciseStatus = bootstrap.exercise.status;
+    if (currentExerciseStatus !== 'ACTIVE') {
+      document.getElementById('liveViewButton').disabled = true;
+      stopPlayback();
+      return;
+    }
+    exerciseParticipants = bootstrap.participants;
+    const participantsRoot = document.getElementById('participants');
+    exerciseParticipants.forEach((participant, index) => {
+      if (!participantControls.has(participant.id)) {
+        addParticipant(participantsRoot, participant, trackColors[index % trackColors.length]);
+      }
+      const control = participantControls.get(participant.id);
+      control.participant = participant;
+      control.count.textContent = `${participant.pointCount} נקודות GPS`;
+    });
+
+    suppressTrackUpdates = true;
+    for (const participant of exerciseParticipants) {
+      if (!liveViewActive || requestedExercise !== currentExercise) return;
+      const control = participantControls.get(participant.id);
+      if (!control || participant.pointCount < 1) continue;
+      const previousTrack = visibleTracks.get(participant.id);
+      if (previousTrack) previousTrack.layers.forEach(layer => map.removeLayer(layer));
+      visibleTracks.delete(participant.id);
+      control.checkbox.checked = true;
+      await toggleTrack(participant, control.checkbox, control.color);
+    }
+
+    const eventData = await api(`/exercises/${requestedExercise}/events`);
+    if (!liveViewActive || requestedExercise !== currentExercise) return;
+    mergeLiveEvents(eventData.items);
+    renderEventAvailability();
+    document.getElementById('eventsEnabled').disabled = !loadedEvents.length;
+    renderTrackInfo();
+    updateTimeline(null, true);
+    participantControls.forEach(control => control.checkbox.disabled = true);
+    fitLivePositions();
+  } catch (error) {
+    document.getElementById('trackInfo').textContent = `שגיאה ברענון הצפייה החיה: ${error.message}`;
+  } finally {
+    suppressTrackUpdates = false;
+    liveRefreshRunning = false;
+  }
+}
+
+async function enterLiveView() {
+  if (currentExerciseStatus !== 'ACTIVE' || liveViewActive) return;
+  pausePlayback();
+  liveViewActive = true;
+  const button = document.getElementById('liveViewButton');
+  button.classList.add('live-active');
+  button.textContent = 'צפייה חיה ●';
+  document.getElementById('playPauseButton').disabled = true;
+  document.getElementById('playbackRate').disabled = true;
+  document.getElementById('timelineCursor').disabled = true;
+  document.getElementById('stopButton').disabled = false;
+  await refreshLiveView();
+  if (liveViewActive) liveViewTimer = setInterval(refreshLiveView, 5000);
+}
+
+function leaveLiveView() {
+  if (liveViewTimer !== null) {
+    clearInterval(liveViewTimer);
+    liveViewTimer = null;
+  }
+  liveViewActive = false;
+  liveRefreshRunning = false;
+  suppressTrackUpdates = false;
+  const button = document.getElementById('liveViewButton');
+  button.classList.remove('live-active');
+  button.textContent = 'צפייה חיה';
+  participantControls.forEach(control => control.checkbox.disabled = false);
+}
+
 function pausePlayback() {
   if (playbackTimer !== null) {
     clearInterval(playbackTimer);
@@ -720,8 +838,11 @@ function startPlayback() {
 }
 
 function stopPlayback() {
+  const wasLive = liveViewActive;
+  leaveLiveView();
   pausePlayback();
-  if (playbackTimestamps.length) setPlaybackPosition(0);
+  if (wasLive) updateTimeline();
+  else if (playbackTimestamps.length) setPlaybackPosition(0);
 }
 
 function findNearestPlaybackIndex(timestamp) {
@@ -739,7 +860,7 @@ function findNearestPlaybackIndex(timestamp) {
     : low;
 }
 
-function updateTimeline(preserveTimestamp = null) {
+function updateTimeline(preserveTimestamp = null, showLatest = false) {
   pausePlayback();
   const empty = document.getElementById('timelineEmpty');
   const chart = document.getElementById('timelineChart');
@@ -779,7 +900,7 @@ function updateTimeline(preserveTimestamp = null) {
     current.textContent = '';
     lanes.innerHTML = '';
     playPauseButton.disabled = true;
-    stopButton.disabled = true;
+    stopButton.disabled = !liveViewActive;
     rateSelect.disabled = true;
     trailCheckbox.disabled = true;
     trailSelect.disabled = true;
@@ -826,18 +947,25 @@ function updateTimeline(preserveTimestamp = null) {
 
   empty.hidden = true;
   chart.hidden = false;
-  playPauseButton.disabled = false;
+  playPauseButton.disabled = liveViewActive;
   stopButton.disabled = false;
-  rateSelect.disabled = false;
+  rateSelect.disabled = liveViewActive;
+  cursor.disabled = liveViewActive;
   trailCheckbox.disabled = false;
   trailSelect.disabled = !trailCheckbox.checked;
-  setPlaybackPosition(preserveTimestamp === null ? 0 : findNearestPlaybackIndex(preserveTimestamp));
+  const targetIndex = showLatest
+    ? playbackTimestamps.length - 1
+    : preserveTimestamp === null
+      ? 0
+      : findNearestPlaybackIndex(preserveTimestamp);
+  setPlaybackPosition(targetIndex);
 }
 
 document.getElementById('playPauseButton').onclick = () => {
   if (playbackTimer === null) startPlayback();
   else pausePlayback();
 };
+document.getElementById('liveViewButton').onclick = enterLiveView;
 document.getElementById('stopButton').onclick = stopPlayback;
 document.getElementById('playbackRate').onchange = () => {
   if (playbackTimer === null) return;
@@ -859,10 +987,10 @@ document.getElementById('eventsEnabled').onchange = event => {
     : null;
   if (!checkbox.checked) {
     hideAllEvents();
-    updateTimeline(previousTimestamp);
+    updateTimeline(previousTimestamp, liveViewActive);
     return;
   }
-  updateTimeline(previousTimestamp);
+  updateTimeline(previousTimestamp, liveViewActive);
 };
 document.getElementById('timelineCursor').oninput = event => {
   pausePlayback();
