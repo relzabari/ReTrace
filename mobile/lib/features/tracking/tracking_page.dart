@@ -275,91 +275,113 @@ class _TrackingPageState extends State<TrackingPage> {
               _row('ממתינות לסנכרון', '${s?.pending ?? 0}'),
               if (_canReportEvents) ...[
                 const SizedBox(height: 24),
-                const Divider(),
-                const Text(
-                  'דיווח אירוע',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _eventDescription,
-                  minLines: 2,
-                  maxLines: 5,
-                  textInputAction: TextInputAction.newline,
-                  decoration: const InputDecoration(
-                    labelText: 'תיאור האירוע',
-                    hintText: 'כתוב מה קרה...',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed:
-                      !_running || _eventBusy ? null : _chooseEventDateTime,
-                  icon: const Icon(Icons.calendar_month_outlined),
-                  label: Text('תאריך ושעה: $_eventDateTimeLabel'),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: !_running || _eventBusy || _locationBusy
-                      ? null
-                      : _chooseEventLocation,
-                  icon: _locationBusy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.map_outlined),
-                  label: Text(
-                    _eventLocation == null ? 'הוסף מיקום' : 'שנה מיקום',
-                  ),
-                ),
-                Text(
-                  _eventLocation == null
-                      ? 'לא נבחר מיקום לאירוע'
-                      : _eventLocation!.useCurrentLocation
-                          ? 'נבחר: מיקום עצמי'
-                          : 'נבחר מיקום על גבי המפה',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _eventLocation == null
-                        ? Theme.of(context).colorScheme.error
-                        : Theme.of(context).colorScheme.primary,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                FilledButton.icon(
-                  onPressed: !_running ||
-                          _eventBusy ||
-                          _locationBusy ||
-                          _eventLocation == null
-                      ? null
-                      : _addEvent,
-                  icon: _eventBusy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add_location_alt_outlined),
-                  label: const Text('הוסף אירוע'),
-                ),
-                const Text(
-                  'הזמן ושם המדווח עם תפקידו יצורפו אוטומטית.',
-                  style: TextStyle(fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
-                if (_eventError != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      _eventError!,
-                      style:
-                          TextStyle(color: Theme.of(context).colorScheme.error),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: const Color(0xFF1B5E20),
+                      width: 2,
                     ),
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'דיווח אירוע',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1B5E20),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _eventDescription,
+                        minLines: 2,
+                        maxLines: 5,
+                        textInputAction: TextInputAction.newline,
+                        decoration: const InputDecoration(
+                          labelText: 'תיאור האירוע',
+                          hintText: 'כתוב מה קרה...',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: !_running || _eventBusy
+                            ? null
+                            : _chooseEventDateTime,
+                        icon: const Icon(Icons.calendar_month_outlined),
+                        label: Text('תאריך ושעה: $_eventDateTimeLabel'),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: !_running || _eventBusy || _locationBusy
+                            ? null
+                            : _chooseEventLocation,
+                        icon: _locationBusy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.map_outlined),
+                        label: Text(
+                          _eventLocation == null ? 'הוסף מיקום' : 'שנה מיקום',
+                        ),
+                      ),
+                      Text(
+                        _eventLocation == null
+                            ? 'לא נבחר מיקום לאירוע'
+                            : _eventLocation!.useCurrentLocation
+                                ? 'נבחר: מיקום עצמי'
+                                : 'נבחר מיקום על גבי המפה',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _eventLocation == null
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.primary,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      FilledButton.icon(
+                        onPressed: !_running ||
+                                _eventBusy ||
+                                _locationBusy ||
+                                _eventLocation == null
+                            ? null
+                            : _addEvent,
+                        icon: _eventBusy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.add_location_alt_outlined),
+                        label: const Text('הוסף אירוע'),
+                      ),
+                      const Text(
+                        'הזמן ושם המדווח עם תפקידו יצורפו אוטומטית.',
+                        style: TextStyle(fontSize: 12),
+                        textAlign: TextAlign.center,
+                      ),
+                      if (_eventError != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            _eventError!,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ],
               const SizedBox(height: 24),
               if (_error != null)
