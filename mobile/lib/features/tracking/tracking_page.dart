@@ -255,11 +255,33 @@ class _TrackingPageState extends State<TrackingPage> {
                       fontSize: 20,
                       color: _running ? Colors.green : Colors.red)),
               const SizedBox(height: 12),
-              Text(_elapsed,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 40,
-                      fontFeatures: [FontFeature.tabularFigures()])),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _elapsed,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 36,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  if (_running)
+                    FilledButton.tonalIcon(
+                      onPressed: _stop,
+                      icon: const Icon(Icons.stop_circle_outlined),
+                      label: const Text('עצור מעקב'),
+                    )
+                  else
+                    FilledButton.icon(
+                      onPressed: _start,
+                      icon: const Icon(Icons.play_circle_outline),
+                      label: const Text('הפעל מחדש'),
+                    ),
+                ],
+              ),
               const SizedBox(height: 28),
               _row(
                   'GPS',
@@ -388,13 +410,6 @@ class _TrackingPageState extends State<TrackingPage> {
                 Text(_error!,
                     style:
                         TextStyle(color: Theme.of(context).colorScheme.error)),
-              if (_running)
-                FilledButton.tonal(
-                    onPressed: _stop, child: const Text('עצור מעקב'))
-              else
-                FilledButton(
-                    onPressed: _start, child: const Text('הפעל מעקב מחדש')),
-              const SizedBox(height: 8),
               Text('Exercise ID: ${widget.exerciseId}',
                   style: const TextStyle(fontSize: 10),
                   textAlign: TextAlign.center),

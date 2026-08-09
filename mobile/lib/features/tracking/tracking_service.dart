@@ -108,6 +108,7 @@ class TrackingService {
       _lastPositionAt = position.timestamp;
       _lastPosition = position;
       await _store.insertPoint({
+        'exercise_id': exerciseId,
         'sequence_number': sequence,
         'captured_at': position.timestamp.toUtc().toIso8601String(),
         'latitude': position.latitude,
@@ -128,8 +129,8 @@ class TrackingService {
   Future<void> _emit() async {
     if (_status.isClosed) return;
     _status.add(TrackingSnapshot(
-      total: await _store.totalCount(),
-      pending: await _store.pendingCount(),
+      total: await _store.totalCount(exerciseId),
+      pending: await _store.pendingCount(exerciseId),
       lastAccuracy: _lastAccuracy,
       lastPositionAt: _lastPositionAt,
       lastSyncOk: _lastSyncOk,
@@ -137,7 +138,7 @@ class TrackingService {
   }
 
   Future<void> syncPending() async {
-    final pending = await _store.pending(limit: 20);
+    final pending = await _store.pending(exerciseId: exerciseId, limit: 20);
     if (pending.isEmpty) {
       _lastSyncOk = true;
       await _emit();
@@ -166,7 +167,7 @@ class TrackingService {
         body: body,
       );
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        await _store.markSynced(
+        await _store.markSynced(exerciseId,
             pending.map((p) => p['sequence_number'] as int).toList());
         _lastSyncOk = true;
       } else {
