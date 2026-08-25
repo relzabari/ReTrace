@@ -1,4 +1,5 @@
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -13,7 +14,15 @@ from app.core.auth import (
 )
 from app.db.session import get_db
 from app.models.models import AppUser, UserRole
-from app.schemas.api import LoginRequest, RefreshRequest, UserCreate, UserRoleUpdate
+from app.core.config import settings
+from app.schemas.api import (
+    LoginRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    RefreshRequest,
+    UserCreate,
+    UserRoleUpdate,
+)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -58,6 +67,36 @@ def refresh_session(payload: RefreshRequest, db: Session = Depends(get_db)):
     if not profile.is_active:
         raise HTTPException(403, "User is disabled")
     return _session_payload(auth_payload, profile)
+
+
+@router.post("/auth/password-reset/request")
+def request_password_reset(payload: PasswordResetRequest):
+    redirect_to = quote(settings.password_reset_redirect_url, safe="")
+    response = supabase_request(
+        "POST",
+        f"/recover?redirect_to={redirect_to}",
+        json={"email": payload.email.strip().lower()},
+    )
+    if response.status_code == 429:
+        raise HTTPException(429, "Too many password reset requests")
+    if response.status_code >= 500:
+        raise HTTPException(503, "Password reset service is unavailable")
+    # Always return the same response so this endpoint cannot reveal whether
+    # an email address is registered.
+    return {"message": "If the email is registered, a reset link was sent"}
+
+
+@router.post("/auth/password-reset/confirm")
+def confirm_password_reset(payload: PasswordResetConfirm):
+    response = supabase_request(
+        "PUT",
+        "/user",
+        access_token=payload.access_token,
+        json={"password": payload.password},
+    )
+    if response.status_code != 200:
+        raise HTTPException(401, "Invalid or expired password reset link")
+    return {"message": "Password updated"}
 
 
 @router.get("/auth/me")

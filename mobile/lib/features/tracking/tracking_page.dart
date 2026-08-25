@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../data/auth_session.dart';
+import '../../ui/app_design.dart';
 import 'event_location_picker_page.dart';
 import 'tracking_service.dart';
 
@@ -294,98 +295,164 @@ class _TrackingPageState extends State<TrackingPage> {
   Widget build(BuildContext context) {
     final s = _snapshot;
     return Scaffold(
-      appBar: AppBar(title: const Text('תרגיל פעיל')),
+      appBar: AppBar(
+        title: const Text('תרגיל פעיל'),
+        leading: const Icon(Icons.route_rounded),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(widget.displayName,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 24, fontWeight: FontWeight.bold)),
-              Text(widget.role,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 16)),
-              const SizedBox(height: 12),
-              Text(
-                  _exerciseClosed
-                      ? 'התרגיל נסגר'
-                      : _running
-                          ? '● מקליט GPS'
-                          : 'המעקב נעצר',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      fontSize: 20,
-                      color: _running && !_exerciseClosed
-                          ? Colors.green
-                          : Colors.red)),
-              const SizedBox(height: 12),
               Row(
                 children: [
-                  Expanded(
-                    child: Text(
-                      _elapsed,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 36,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
+                  const CircleAvatar(
+                    radius: 27,
+                    backgroundColor: AppColors.forest,
+                    foregroundColor: Colors.white,
+                    child: Icon(Icons.person_rounded, size: 30),
                   ),
                   const SizedBox(width: 12),
-                  if (_running)
-                    FilledButton.tonalIcon(
-                      onPressed: _stop,
-                      icon: const Icon(Icons.stop_circle_outlined),
-                      label: const Text('עצור מעקב'),
-                    )
-                  else
-                    FilledButton.icon(
-                      onPressed: _exerciseClosed ? null : _start,
-                      icon: const Icon(Icons.play_circle_outline),
-                      label: Text(
-                        _exerciseClosed ? 'התרגיל נסגר' : 'הפעל מחדש',
-                      ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.displayName,
+                            style: const TextStyle(
+                                fontSize: 23,
+                                fontWeight: FontWeight.w900,
+                                color: AppColors.ink)),
+                        Text(widget.role,
+                            style: const TextStyle(
+                                fontSize: 15,
+                                color: AppColors.forest,
+                                fontWeight: FontWeight.w700)),
+                      ],
                     ),
+                  ),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: _running && !_exerciseClosed
+                          ? const Color(0xFFE2F8F4)
+                          : const Color(0xFFFDE8E7),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                            _running && !_exerciseClosed
+                                ? Icons.satellite_alt_rounded
+                                : Icons.pause_circle_outline_rounded,
+                            size: 18,
+                            color: _running && !_exerciseClosed
+                                ? AppColors.teal
+                                : AppColors.danger),
+                        const SizedBox(width: 6),
+                        Text(
+                          _exerciseClosed
+                              ? 'התרגיל נסגר'
+                              : _running
+                                  ? 'מקליט GPS'
+                                  : 'המעקב נעצר',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              color: _running && !_exerciseClosed
+                                  ? AppColors.teal
+                                  : AppColors.danger),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 28),
-              _row(
-                  'GPS',
-                  s?.lastAccuracy == null
-                      ? 'ממתין...'
-                      : 'דיוק ±${s!.lastAccuracy!.toStringAsFixed(1)} מ׳'),
-              _row(
-                  'שרת',
-                  s?.lastSyncOk == false
-                      ? 'Offline / ינסה שוב'
-                      : 'מחובר / מסונכרן'),
-              _row('נקודות שנשמרו', '${s?.total ?? 0}'),
-              _row('ממתינות לסנכרון', '${s?.pending ?? 0}'),
+              const SizedBox(height: 12),
+              AppCard(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _elapsed,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 35,
+                          fontWeight: FontWeight.w900,
+                          color: AppColors.forestDark,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    if (_running)
+                      FilledButton.icon(
+                        onPressed: _stop,
+                        style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.danger,
+                            foregroundColor: Colors.white),
+                        icon: const Icon(Icons.stop_rounded),
+                        label: const Text('עצור מעקב'),
+                      )
+                    else
+                      FilledButton.icon(
+                        onPressed: _exerciseClosed ? null : _start,
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label:
+                            Text(_exerciseClosed ? 'התרגיל נסגר' : 'הפעל מחדש'),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = (constraints.maxWidth - 10) / 2;
+                  return Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _metricCard(
+                          width,
+                          'GPS',
+                          s?.lastAccuracy == null
+                              ? 'ממתין...'
+                              : 'דיוק ±${s!.lastAccuracy!.toStringAsFixed(1)} מ׳',
+                          Icons.gps_fixed_rounded,
+                          AppColors.cyan),
+                      _metricCard(
+                          width,
+                          'שרת',
+                          s?.lastSyncOk == false
+                              ? 'Offline / ינסה שוב'
+                              : 'מחובר / מסונכרן',
+                          Icons.cloud_done_rounded,
+                          AppColors.teal),
+                      _metricCard(width, 'נקודות שנשמרו', '${s?.total ?? 0}',
+                          Icons.storage_rounded, const Color(0xFF388E3C)),
+                      _metricCard(
+                          width,
+                          'ממתינות לסנכרון',
+                          '${s?.pending ?? 0}',
+                          Icons.sync_rounded,
+                          AppColors.blue),
+                    ],
+                  );
+                },
+              ),
               if (_canReportEvents) ...[
                 const SizedBox(height: 24),
-                Container(
+                AppCard(
+                  tint: const Color(0xFFFBFEFC),
+                  borderColor: AppColors.forest,
                   padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: const Color(0xFF1B5E20),
-                      width: 2,
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Text(
-                        'דיווח אירוע',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1B5E20),
-                        ),
-                      ),
+                      const SectionTitle('דיווח אירוע',
+                          icon: Icons.assignment_rounded),
                       const SizedBox(height: 12),
                       TextField(
                         controller: _eventDescription,
@@ -403,6 +470,9 @@ class _TrackingPageState extends State<TrackingPage> {
                         onPressed: !_running || _eventBusy
                             ? null
                             : _chooseEventDateTime,
+                        style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.amber,
+                            side: const BorderSide(color: AppColors.amber)),
                         icon: const Icon(Icons.calendar_month_outlined),
                         label: Text('תאריך ושעה: $_eventDateTimeLabel'),
                       ),
@@ -411,6 +481,9 @@ class _TrackingPageState extends State<TrackingPage> {
                         onPressed: !_running || _eventBusy || _locationBusy
                             ? null
                             : _chooseEventLocation,
+                        style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.blue,
+                            side: const BorderSide(color: AppColors.blue)),
                         icon: _locationBusy
                             ? const SizedBox(
                                 width: 18,
@@ -438,27 +511,35 @@ class _TrackingPageState extends State<TrackingPage> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 8),
-                      FilledButton.icon(
+                      GradientActionButton(
                         onPressed: !_running ||
                                 _eventBusy ||
                                 _locationBusy ||
                                 _eventLocation == null
                             ? null
                             : _addEvent,
-                        icon: _eventBusy
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.add_location_alt_outlined),
-                        label: const Text('הוסף אירוע'),
+                        icon: Icons.add_location_alt_rounded,
+                        label: _eventBusy ? 'שומר אירוע...' : 'הוסף אירוע',
                       ),
-                      const Text(
-                        'הזמן ושם המדווח עם תפקידו יצורפו אוטומטית.',
-                        style: TextStyle(fontSize: 12),
-                        textAlign: TextAlign.center,
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                            color: AppColors.mint,
+                            borderRadius: BorderRadius.circular(12)),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.info_outline_rounded,
+                                size: 18, color: AppColors.forest),
+                            SizedBox(width: 7),
+                            Expanded(
+                                child: Text(
+                                    'הזמן ושם המדווח עם תפקידו יצורפו אוטומטית.',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.forest))),
+                          ],
+                        ),
                       ),
                       if (_eventError != null)
                         Padding(
@@ -489,12 +570,26 @@ class _TrackingPageState extends State<TrackingPage> {
     );
   }
 
-  Widget _row(String label, String value) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child:
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-          Flexible(child: Text(value))
-        ]),
+  Widget _metricCard(double width, String label, String value, IconData icon,
+          Color color) =>
+      SizedBox(
+        width: width,
+        child: AppCard(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 26),
+              const SizedBox(height: 6),
+              Text(label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontWeight: FontWeight.w900, color: color)),
+              const SizedBox(height: 4),
+              Text(value,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, color: AppColors.ink)),
+            ],
+          ),
+        ),
       );
 }

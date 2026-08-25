@@ -17,6 +17,15 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=10)
 
 
+class PasswordResetRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+class PasswordResetConfirm(BaseModel):
+    access_token: str = Field(min_length=20)
+    password: str = Field(min_length=8, max_length=200)
+
+
 class UserCreate(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=200)

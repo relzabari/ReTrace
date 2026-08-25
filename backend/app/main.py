@@ -61,3 +61,8 @@ app.include_router(auth_router)
 @app.get("/", include_in_schema=False)
 def prototype_web() -> FileResponse:
     return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
+@app.get("/reset-password", include_in_schema=False)
+def reset_password_page() -> FileResponse:
+    return FileResponse(Path(__file__).parent / "static" / "reset-password.html")

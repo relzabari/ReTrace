@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../../data/api_client.dart';
 import '../../data/auth_session.dart';
 import '../tracking/tracking_page.dart';
+import '../../ui/app_design.dart';
 
 class SetupPage extends StatefulWidget {
   const SetupPage({
@@ -245,7 +246,13 @@ class _SetupPageState extends State<SetupPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Exercise Tracker 0.2'),
+        title: const Column(
+          children: [
+            Text('ReTrace'),
+            Text('מערכת ניהול תרגילים',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
+          ],
+        ),
         actions: [
           IconButton(
             onPressed: widget.onLogout,
@@ -257,136 +264,185 @@ class _SetupPageState extends State<SetupPage> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          Text(
-            '${widget.session.user.email} · ${widget.session.user.role}',
-            style: const TextStyle(fontSize: 13),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 18),
-          const Text('פרטי המשתתף',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          TextField(
-              controller: _displayName,
-              decoration: const InputDecoration(
-                  labelText: 'שם', border: OutlineInputBorder())),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            initialValue: _selectedRole,
-            decoration: const InputDecoration(
-              labelText: 'סוג כוח',
-              border: OutlineInputBorder(),
-            ),
-            items: _availableRoles
-                .map((role) => DropdownMenuItem(value: role, child: Text(role)))
-                .toList(),
-            onChanged: _busy
-                ? null
-                : (role) {
-                    if (role != null) setState(() => _selectedRole = role);
-                  },
-          ),
-          if (widget.session.user.canManageExercises) ...[
-            const SizedBox(height: 24),
-            const Divider(),
-            const Text('אפשרות א׳ — צור תרגיל ניסוי חדש',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            TextField(
-                controller: _exerciseName,
-                decoration: const InputDecoration(
-                    labelText: 'שם התרגיל', border: OutlineInputBorder())),
-            const SizedBox(height: 8),
-            FilledButton(
-                onPressed: _busy ? null : _createAndStart,
-                child: const Text('צור, התחל ועבור למעקב')),
-          ],
-          const SizedBox(height: 24),
-          const Text('אפשרות ב׳ — הצטרף לתרגיל פעיל קיים',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  key: ValueKey(
-                    '$_selectedExerciseId-${_activeExercises.map((item) => item['id']).join(',')}',
-                  ),
-                  initialValue: _selectedExerciseId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'תרגיל פעיל',
-                    border: OutlineInputBorder(),
-                  ),
-                  hint: Text(_activeExercises.isEmpty
-                      ? 'אין תרגילים פעילים'
-                      : 'בחר תרגיל'),
-                  items: _activeExercises
-                      .map(
-                        (exercise) => DropdownMenuItem(
-                          value: exercise['id'].toString(),
-                          child: Text(
-                            _exerciseLabel(exercise),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _busy || _loadingExercises
-                      ? null
-                      : (value) => setState(() => _selectedExerciseId = value),
+          AppCard(
+            tint: AppColors.mint,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+            child: Row(
+              children: [
+                const CircleAvatar(
+                  backgroundColor: AppColors.forest,
+                  foregroundColor: Colors.white,
+                  child: Icon(Icons.person_rounded),
                 ),
-              ),
-              const SizedBox(width: 8),
-              IconButton.filledTonal(
-                onPressed:
-                    _busy || _loadingExercises ? null : _loadActiveExercises,
-                tooltip: 'רענן תרגילים פעילים',
-                icon: _loadingExercises
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh),
-              ),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    widget.session.user.email,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w800, color: AppColors.ink),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Chip(
+                  avatar: const Icon(Icons.verified_user_rounded, size: 16),
+                  label: Text(widget.session.user.role),
+                  backgroundColor: Colors.white,
+                  side: BorderSide.none,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SectionTitle('פרטי המשתתף', icon: Icons.badge_rounded),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _displayName,
+                  decoration: const InputDecoration(
+                      labelText: 'שם',
+                      prefixIcon: Icon(Icons.person_outline_rounded)),
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedRole,
+                  decoration: const InputDecoration(
+                      labelText: 'סוג כוח',
+                      prefixIcon: Icon(Icons.groups_rounded)),
+                  items: _availableRoles
+                      .map((role) =>
+                          DropdownMenuItem(value: role, child: Text(role)))
+                      .toList(),
+                  onChanged: _busy
+                      ? null
+                      : (role) {
+                          if (role != null) {
+                            setState(() => _selectedRole = role);
+                          }
+                        },
+                ),
+              ],
+            ),
           ),
           if (widget.session.user.canManageExercises) ...[
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _busy || _selectedExerciseId == null
-                  ? null
-                  : _renameSelectedExercise,
-              icon: const Icon(Icons.edit_outlined),
-              label: const Text('שנה את שם התרגיל'),
+            const SizedBox(height: 16),
+            AppCard(
+              tint: const Color(0xFFF0FBF9),
+              borderColor: const Color(0xFFB7E4DD),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SectionTitle('צור תרגיל חדש',
+                      icon: Icons.add_task_rounded, color: AppColors.teal),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _exerciseName,
+                    decoration: const InputDecoration(
+                        labelText: 'שם התרגיל',
+                        prefixIcon: Icon(Icons.edit_note_rounded)),
+                  ),
+                  const SizedBox(height: 12),
+                  GradientActionButton(
+                    onPressed: _busy ? null : _createAndStart,
+                    icon: Icons.rocket_launch_rounded,
+                    label: 'צור, התחל ועבור למעקב',
+                  ),
+                ],
+              ),
             ),
           ],
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
+          const SizedBox(height: 16),
+          AppCard(
+            tint: const Color(0xFFFFFAED),
+            borderColor: const Color(0xFFF3D792),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SectionTitle('הצטרף לתרגיל פעיל',
+                    icon: Icons.flag_rounded, color: AppColors.amber),
+                const SizedBox(height: 16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey(
+                            '$_selectedExerciseId-${_activeExercises.map((item) => item['id']).join(',')}'),
+                        initialValue: _selectedExerciseId,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                            labelText: 'תרגיל פעיל',
+                            prefixIcon: Icon(Icons.directions_run_rounded)),
+                        hint: Text(_activeExercises.isEmpty
+                            ? 'אין תרגילים פעילים'
+                            : 'בחר תרגיל'),
+                        items: _activeExercises
+                            .map((exercise) => DropdownMenuItem(
+                                  value: exercise['id'].toString(),
+                                  child: Text(_exerciseLabel(exercise),
+                                      overflow: TextOverflow.ellipsis),
+                                ))
+                            .toList(),
+                        onChanged: _busy || _loadingExercises
+                            ? null
+                            : (value) =>
+                                setState(() => _selectedExerciseId = value),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      onPressed: _busy || _loadingExercises
+                          ? null
+                          : _loadActiveExercises,
+                      tooltip: 'רענן תרגילים פעילים',
+                      style: IconButton.styleFrom(
+                          backgroundColor: AppColors.amber,
+                          foregroundColor: AppColors.forestDark),
+                      icon: _loadingExercises
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.refresh_rounded),
+                    ),
+                  ],
+                ),
+                if (widget.session.user.canManageExercises) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _busy || _selectedExerciseId == null
+                        ? null
+                        : _renameSelectedExercise,
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('שנה את שם התרגיל'),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                GradientActionButton(
                   onPressed: _busy || _selectedExerciseId == null
                       ? null
                       : _joinExisting,
-                  child: const Text('הצטרף ועבור למעקב'),
+                  icon: Icons.login_rounded,
+                  label: 'הצטרף ועבור למעקב',
+                  colors: const [Color(0xFFFFC83D), AppColors.amber],
                 ),
-              ),
-              if (widget.session.user.canManageExercises) ...[
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton.tonalIcon(
+                if (widget.session.user.canManageExercises) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
                     onPressed: _busy || _selectedExerciseId == null
                         ? null
                         : _closeSelectedExercise,
-                    icon: const Icon(Icons.lock_outline),
+                    icon: const Icon(Icons.lock_outline_rounded),
                     label: const Text('סגור תרגיל'),
+                    style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.danger,
+                        side: const BorderSide(color: AppColors.danger)),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
           if (_busy)
             const Padding(

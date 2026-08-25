@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'data/auth_session.dart';
 import 'features/auth/login_page.dart';
 import 'features/setup/setup_page.dart';
+import 'ui/app_design.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,7 +18,7 @@ class PrototypeApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Exercise Tracker Prototype',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.blueGrey),
+      theme: buildAppTheme(),
       locale: const Locale('he'),
       home: const Directionality(
         textDirection: TextDirection.rtl,

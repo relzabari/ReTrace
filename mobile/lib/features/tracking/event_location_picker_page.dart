@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../ui/app_design.dart';
+
 class EventLocationSelection {
   const EventLocationSelection.current()
       : useCurrentLocation = true,
@@ -59,14 +61,24 @@ class _EventLocationPickerPageState extends State<EventLocationPickerPage> {
       appBar: AppBar(title: const Text('בחירת מיקום לאירוע')),
       body: Column(
         children: [
-          CheckboxListTile(
-            value: false,
-            onChanged: _useCurrentLocation,
-            title: const Text('בחר מיקום עצמי'),
-            subtitle: const Text('חזרה מיידית ושימוש במיקום הטלפון'),
-            controlAffinity: ListTileControlAffinity.leading,
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: AppCard(
+              tint: AppColors.mint,
+              padding: EdgeInsets.zero,
+              child: CheckboxListTile(
+                value: false,
+                onChanged: _useCurrentLocation,
+                title: const Text('בחר מיקום עצמי',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w900, color: AppColors.forest)),
+                subtitle: const Text('חזרה מיידית ושימוש במיקום הטלפון'),
+                secondary: const Icon(Icons.my_location_rounded,
+                    color: AppColors.teal),
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            ),
           ),
-          const Divider(height: 1),
           Expanded(
             child: Stack(
               children: [
@@ -105,9 +117,11 @@ class _EventLocationPickerPageState extends State<EventLocationPickerPage> {
                   top: 12,
                   left: 12,
                   right: 12,
-                  child: Card(
+                  child: AppCard(
+                    tint: Colors.white.withValues(alpha: .94),
+                    padding: const EdgeInsets.all(10),
                     child: Padding(
-                      padding: const EdgeInsets.all(10),
+                      padding: EdgeInsets.zero,
                       child: Text(
                         _selectedPoint == null
                             ? 'לחץ על המפה כדי לבחור את מיקום האירוע'
@@ -138,10 +152,10 @@ class _EventLocationPickerPageState extends State<EventLocationPickerPage> {
             minimum: const EdgeInsets.all(16),
             child: SizedBox(
               width: double.infinity,
-              child: FilledButton.icon(
+              child: GradientActionButton(
                 onPressed: _selectedPoint == null ? null : _confirmMapPoint,
-                icon: const Icon(Icons.check),
-                label: const Text('אישור המיקום שנבחר'),
+                icon: Icons.check_circle_rounded,
+                label: 'אישור המיקום שנבחר',
               ),
             ),
           ),

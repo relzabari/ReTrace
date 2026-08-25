@@ -3,6 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>
+    if (new URLSearchParams(location.hash.slice(1)).get('type') === 'recovery') {
+      location.replace('/reset-password' + location.hash);
+    }
+  </script>
   <title>מערכת תחקור תרגילים</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <style>

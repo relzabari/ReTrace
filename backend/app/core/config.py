@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     supabase_publishable_key: str = ""
     supabase_secret_key: str = ""
     initial_admin_email: str = ""
+    password_reset_redirect_url: str = "https://retrace-exercise-platform.onrender.com/"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

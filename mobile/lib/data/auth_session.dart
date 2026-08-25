@@ -64,6 +64,23 @@ class AuthSession {
     return session;
   }
 
+  static Future<void> requestPasswordReset({
+    required String email,
+    String serverUrl = defaultServerUrl,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$serverUrl/api/v1/auth/password-reset/request'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email.trim()}),
+    );
+    if (response.statusCode == 429) {
+      throw StateError('נשלחו יותר מדי בקשות. יש להמתין מעט ולנסות שוב.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError('לא ניתן לשלוח כרגע קישור לאיפוס סיסמה.');
+    }
+  }
+
   static Future<AuthSession?> restore({
     String serverUrl = defaultServerUrl,
   }) async {
