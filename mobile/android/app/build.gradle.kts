@@ -34,6 +34,18 @@ android {
     }
 }
 
+val copyReleaseApkWithAppName by tasks.registering(Copy::class) {
+    from(layout.buildDirectory.file("outputs/apk/release/app-release.apk"))
+    from(layout.buildDirectory.file("outputs/apk/release/app-release.apk")) {
+        rename { "ReTrace.apk" }
+    }
+    into(layout.buildDirectory.dir("outputs/flutter-apk"))
+}
+
+tasks.matching { it.name == "assembleRelease" }.configureEach {
+    finalizedBy(copyReleaseApkWithAppName)
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
