@@ -43,6 +43,7 @@
     .timeline-controls label { display:flex; align-items:center; gap:6px; font-size:13px; }
     .timeline-controls .rate-control { margin-right:auto; }
     .timeline-controls select { padding:7px 10px; }
+    .timeline-controls .custom-rate-input { width:76px; padding:7px 9px; }
     .timeline-chart { direction:ltr; }
     .timeline-lanes { display:grid; gap:3px; min-height:16px; max-height:64px; overflow-y:auto; margin:0 7px 5px; }
     .timeline-lane { position:relative; height:7px; background:#edf0f2; border-radius:999px; overflow:hidden; }
@@ -174,7 +175,10 @@
             <option value="1">נקודה אחת בשנייה</option>
             <option value="5">5 נקודות בשנייה</option>
             <option value="10">10 נקודות בשנייה</option>
+            <option value="50">50 נקודות בשנייה</option>
+            <option value="custom">מותאם אישית</option>
           </select>
+          <input id="customPlaybackRate" class="custom-rate-input" type="number" min="1" max="100" step="1" value="25" aria-label="מספר נקודות בשנייה" inputmode="numeric" hidden disabled />
         </label>
         <label for="trailEnabled">
           <input id="trailEnabled" type="checkbox" disabled />
@@ -257,6 +261,8 @@ let loadedEvents = [];
 let playbackTimer = null;
 let playbackTimestamps = [];
 let playbackIndex = 0;
+const playbackRateStorageKey = 'retracePlaybackRate';
+const customPlaybackRateStorageKey = 'retraceCustomPlaybackRate';
 let liveViewTimer = null;
 let liveViewActive = false;
 let liveRefreshRunning = false;
@@ -868,7 +874,7 @@ async function enterLiveView() {
   button.classList.add('live-active');
   button.textContent = 'צפייה חיה ●';
   document.getElementById('playPauseButton').disabled = true;
-  document.getElementById('playbackRate').disabled = true;
+  setPlaybackRateDisabled(true);
   document.getElementById('timelineCursor').disabled = true;
   document.getElementById('stopButton').disabled = false;
   await refreshLiveView();
@@ -1014,14 +1020,60 @@ function advancePlayback() {
   if (playbackIndex >= playbackTimestamps.length - 1) pausePlayback();
 }
 
+function normalizedCustomPlaybackRate() {
+  const input = document.getElementById('customPlaybackRate');
+  const parsed = Math.round(Number(input.value));
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(100, parsed)) : 25;
+}
+
+function selectedPlaybackRate() {
+  const selection = document.getElementById('playbackRate').value;
+  return selection === 'custom' ? normalizedCustomPlaybackRate() : Number(selection);
+}
+
+function restartPlaybackTimer() {
+  if (playbackTimer === null) return;
+  clearInterval(playbackTimer);
+  playbackTimer = setInterval(advancePlayback, 1000 / selectedPlaybackRate());
+}
+
+function syncPlaybackRateControl({ persist = true, restart = true } = {}) {
+  const select = document.getElementById('playbackRate');
+  const input = document.getElementById('customPlaybackRate');
+  const isCustom = select.value === 'custom';
+  input.hidden = !isCustom;
+  input.disabled = select.disabled || !isCustom;
+  if (isCustom) input.value = String(normalizedCustomPlaybackRate());
+  if (persist) {
+    localStorage.setItem(playbackRateStorageKey, select.value);
+    localStorage.setItem(customPlaybackRateStorageKey, String(normalizedCustomPlaybackRate()));
+  }
+  if (restart) restartPlaybackTimer();
+}
+
+function setPlaybackRateDisabled(disabled) {
+  document.getElementById('playbackRate').disabled = disabled;
+  syncPlaybackRateControl({ persist: false, restart: false });
+}
+
+function restorePlaybackRate() {
+  const select = document.getElementById('playbackRate');
+  const savedRate = localStorage.getItem(playbackRateStorageKey);
+  if ([...select.options].some(option => option.value === savedRate)) select.value = savedRate;
+  const savedCustomRate = Number(localStorage.getItem(customPlaybackRateStorageKey));
+  if (Number.isFinite(savedCustomRate) && savedCustomRate >= 1 && savedCustomRate <= 100) {
+    document.getElementById('customPlaybackRate').value = String(Math.round(savedCustomRate));
+  }
+  syncPlaybackRateControl({ persist: false, restart: false });
+}
+
 function startPlayback() {
   if (!playbackTimestamps.length) return;
   if (playbackIndex >= playbackTimestamps.length - 1) setPlaybackPosition(0);
-  const rate = Number(document.getElementById('playbackRate').value);
   const button = document.getElementById('playPauseButton');
   button.textContent = 'PAUSE';
   button.setAttribute('aria-pressed', 'true');
-  playbackTimer = setInterval(advancePlayback, 1000 / rate);
+  playbackTimer = setInterval(advancePlayback, 1000 / selectedPlaybackRate());
 }
 
 function stopPlayback() {
@@ -1088,7 +1140,7 @@ function updateTimeline(preserveTimestamp = null, showLatest = false) {
     lanes.innerHTML = '';
     playPauseButton.disabled = true;
     stopButton.disabled = !liveViewActive;
-    rateSelect.disabled = true;
+    setPlaybackRateDisabled(true);
     trailCheckbox.disabled = true;
     trailSelect.disabled = true;
     renderEventsAtTime(Number.NEGATIVE_INFINITY);
@@ -1136,7 +1188,7 @@ function updateTimeline(preserveTimestamp = null, showLatest = false) {
   chart.hidden = false;
   playPauseButton.disabled = liveViewActive;
   stopButton.disabled = false;
-  rateSelect.disabled = liveViewActive;
+  setPlaybackRateDisabled(liveViewActive);
   cursor.disabled = liveViewActive;
   trailCheckbox.disabled = false;
   trailSelect.disabled = !trailCheckbox.checked;
@@ -1158,11 +1210,12 @@ document.getElementById('addLiveEventButton').onclick = openWebEventDialog;
 document.getElementById('addEventForm').onsubmit = saveWebEvent;
 document.getElementById('cancelWebEventButton').onclick = closeWebEventDialog;
 document.getElementById('playbackRate').onchange = () => {
-  if (playbackTimer === null) return;
-  clearInterval(playbackTimer);
-  const rate = Number(document.getElementById('playbackRate').value);
-  playbackTimer = setInterval(advancePlayback, 1000 / rate);
+  syncPlaybackRateControl();
+  if (document.getElementById('playbackRate').value === 'custom') {
+    document.getElementById('customPlaybackRate').focus();
+  }
 };
+document.getElementById('customPlaybackRate').onchange = () => syncPlaybackRateControl();
 document.getElementById('trailEnabled').onchange = event => {
   document.getElementById('trailLength').disabled = !event.target.checked || !playbackTimestamps.length;
   if (playbackTimestamps.length) renderMapAtTime(playbackTimestamps[playbackIndex]);
@@ -1409,6 +1462,7 @@ document.getElementById('logoutButton').onclick = () => {
   location.reload();
 };
 
+restorePlaybackRate();
 initializeAuth();
 </script>
 </body>
