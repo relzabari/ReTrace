@@ -32,6 +32,7 @@
     aside { padding:16px; background:white; border-left:1px solid #ddd; overflow:auto; }
     .map-area { display:flex; flex-direction:column; min-width:0; min-height:0; }
     #map { flex:1; min-height:360px; }
+    .leaflet-control-layers { direction:rtl; text-align:right; }
     #timeline { background:#fff; border-top:1px solid #ddd; padding:12px 20px 14px; direction:rtl; }
     .timeline-header { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:8px; }
     .timeline-current { font-variant-numeric:tabular-nums; color:#425466; font-size:13px; }
@@ -244,11 +245,47 @@
 </dialog>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
-const map = L.map('map').setView([31.95, 35.13], 13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+const mapBaseLayerStorageKey = 'retraceMapBaseLayer';
+const streetMapLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 20,
   attribution: '&copy; OpenStreetMap contributors'
-}).addTo(map);
+});
+const satelliteLayer = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  {
+    maxZoom: 20,
+    attribution: 'Tiles &copy; Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+  }
+);
+const hybridLayer = L.layerGroup([
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {
+      maxZoom: 20,
+      attribution: 'Tiles &copy; Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+    }
+  ),
+  L.tileLayer(
+    'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    {
+      maxZoom: 20,
+      attribution: 'Reference layer &copy; Esri'
+    }
+  )
+]);
+const mapBaseLayers = {
+  'מפה': streetMapLayer,
+  'לוויין': satelliteLayer,
+  'תצוגה משולבת': hybridLayer
+};
+const savedMapBaseLayer = localStorage.getItem(mapBaseLayerStorageKey);
+const initialMapBaseLayerName = Object.prototype.hasOwnProperty.call(mapBaseLayers, savedMapBaseLayer)
+  ? savedMapBaseLayer
+  : 'מפה';
+const map = L.map('map', {layers: [mapBaseLayers[initialMapBaseLayerName]]})
+  .setView([31.95, 35.13], 13);
+L.control.layers(mapBaseLayers, null, {position: 'topright'}).addTo(map);
+map.on('baselayerchange', event => localStorage.setItem(mapBaseLayerStorageKey, event.name));
 
 const trackColors = ['#2563eb', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#4d7c0f', '#ca8a04', '#475569'];
 const eventReporterRoles = new Set(['רבשץ', 'חמל', 'מנהל תרגיל', 'ADMIN', 'MANAGER']);
