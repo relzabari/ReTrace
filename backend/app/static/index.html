@@ -33,6 +33,7 @@
     .map-area { display:flex; flex-direction:column; min-width:0; min-height:0; }
     #map { flex:1; min-height:360px; }
     .leaflet-control-layers { direction:rtl; text-align:right; }
+    .hybrid-osm-overlay { mix-blend-mode:multiply; }
     #timeline { background:#fff; border-top:1px solid #ddd; padding:12px 20px 14px; direction:rtl; }
     .timeline-header { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:8px; }
     .timeline-current { font-variant-numeric:tabular-nums; color:#425466; font-size:13px; }
@@ -247,6 +248,7 @@
 <script>
 const mapBaseLayerStorageKey = 'retraceMapBaseLayer';
 const streetMapLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxNativeZoom: 19,
   maxZoom: 20,
   attribution: '&copy; OpenStreetMap contributors'
 });
@@ -265,20 +267,13 @@ const hybridLayer = L.layerGroup([
       attribution: 'Tiles &copy; Esri, Vantor, Earthstar Geographics, and the GIS User Community'
     }
   ),
-  L.tileLayer(
-    'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
-    {
-      maxZoom: 20,
-      attribution: 'Transportation &copy; Esri, HERE, Garmin, OpenStreetMap contributors'
-    }
-  ),
-  L.tileLayer(
-    'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    {
-      maxZoom: 20,
-      attribution: 'Reference layer &copy; Esri'
-    }
-  )
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxNativeZoom: 19,
+    maxZoom: 20,
+    opacity: 0.72,
+    className: 'hybrid-osm-overlay',
+    attribution: '&copy; OpenStreetMap contributors'
+  })
 ]);
 const mapBaseLayers = {
   'מפה': streetMapLayer,
