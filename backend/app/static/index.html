@@ -424,8 +424,18 @@ async function authenticatedFetch(path, options = {}, retry = true) {
 
 async function api(path, options = {}) {
   const response = await authenticatedFetch('/api/v1' + path, options);
-  if (!response.ok) throw new Error(await response.text());
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok) {
+    if (contentType.includes('text/html')) {
+      throw new Error('השרת ביצע בדיקת אבטחה זמנית. יש להמתין מעט ולנסות שוב.');
+    }
+    const message = (await response.text()).trim();
+    throw new Error(message.slice(0, 500) || `שגיאת שרת (${response.status})`);
+  }
   if (response.status === 204) return null;
+  if (!contentType.includes('application/json')) {
+    throw new Error('השרת החזיר תשובה לא צפויה. יש לנסות שוב בעוד מספר שניות.');
+  }
   return response.json();
 }
 
@@ -530,7 +540,7 @@ async function loadExercise(id) {
   document.getElementById('exportVideoButton').disabled = !data.participants.some(participant => participant.pointCount > 0);
   currentVideoExport = exportData.items[0] || null;
   if (currentVideoExport?.status === 'QUEUED' || currentVideoExport?.status === 'PROCESSING') {
-    videoExportPollTimer = setInterval(pollVideoExport, 2000);
+    videoExportPollTimer = setInterval(pollVideoExport, 10000);
   }
 }
 
@@ -1509,7 +1519,7 @@ async function submitVideoExport(event) {
     });
     updateVideoExportStatus(job);
     if (videoExportPollTimer !== null) clearInterval(videoExportPollTimer);
-    videoExportPollTimer = setInterval(pollVideoExport, 2000);
+    videoExportPollTimer = setInterval(pollVideoExport, 10000);
   } catch (error) {
     errorRoot.textContent = `יצירת הייצוא נכשלה: ${error.message}`;
     button.disabled = false;

@@ -1,3 +1,4 @@
+import os
 import re
 import shutil
 import subprocess
@@ -98,8 +99,9 @@ def _render_video_export(job_id: uuid.UUID) -> None:
         work_dir.mkdir(parents=True, exist_ok=True)
         video_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{job_id}.mp4"
+        internal_base_url = f"http://127.0.0.1:{os.getenv('PORT', '8000')}"
         render_url = (
-            f"{settings.public_base_url.rstrip('/')}/video-render/{job_id}"
+            f"{internal_base_url.rstrip('/')}/video-render/{job_id}"
             f"#token={token}"
         )
 
