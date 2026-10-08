@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2 import Geography
-from sqlalchemy import BigInteger, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +21,13 @@ class UserRole(str, enum.Enum):
     ADMIN = "ADMIN"
     MANAGER = "MANAGER"
     USER = "USER"
+
+
+class VideoExportStatus(str, enum.Enum):
+    QUEUED = "QUEUED"
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    FAILED = "FAILED"
 
 
 class AppUser(Base):
@@ -123,3 +130,30 @@ class ExerciseEvent(Base):
     reporter_name: Mapped[str] = mapped_column(String(120), nullable=False)
     reporter_role: Mapped[str] = mapped_column(String(40), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class VideoExportJob(Base):
+    __tablename__ = "video_export_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    exercise_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("exercises.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[VideoExportStatus] = mapped_column(
+        Enum(VideoExportStatus), default=VideoExportStatus.QUEUED, nullable=False, index=True
+    )
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False)
+    render_token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    output_path: Mapped[str | None] = mapped_column(Text)
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

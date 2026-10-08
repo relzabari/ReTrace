@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import text
 
 from app.api.auth_routes import router as auth_router
+from app.api.export_routes import router as export_router
 from app.api.routes import router
 from app.db.session import Base, engine
 from app.models import models  # noqa: F401
@@ -53,9 +54,14 @@ def startup() -> None:
             )
         )
 
+    from app.services.video_export import recover_video_exports
+
+    recover_video_exports()
+
 
 app.include_router(router)
 app.include_router(auth_router)
+app.include_router(export_router)
 
 
 @app.get("/", include_in_schema=False)
@@ -66,3 +72,8 @@ def prototype_web() -> FileResponse:
 @app.get("/reset-password", include_in_schema=False)
 def reset_password_page() -> FileResponse:
     return FileResponse(Path(__file__).parent / "static" / "reset-password.html")
+
+
+@app.get("/video-render/{job_id}", include_in_schema=False)
+def video_render_page(job_id: str) -> FileResponse:
+    return FileResponse(Path(__file__).parent / "static" / "video-render.html")

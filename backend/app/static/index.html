@@ -100,6 +100,16 @@
     .delete-warning { padding:12px; border:1px solid #dc2626; border-radius:8px; background:#fef2f2; color:#7f1d1d; line-height:1.5; }
     .delete-confirm-checkbox { display:flex; align-items:flex-start; gap:9px; margin:14px 0; font-weight:700; line-height:1.45; cursor:pointer; }
     .delete-confirm-checkbox input { margin-top:3px; flex:0 0 auto; accent-color:#b91c1c; }
+    .export-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    .export-grid label { margin:0; }
+    .export-grid select, .export-grid input[type="number"], .export-grid input[type="datetime-local"] { width:100%; margin-top:5px; padding:9px; border:1px solid #ccd1d1; border-radius:8px; font:inherit; }
+    .export-check { display:flex !important; align-items:center; gap:7px; font-weight:400 !important; }
+    .export-participants { max-height:160px; overflow-y:auto; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; padding:10px; border:1px solid #ddd; border-radius:8px; }
+    .export-participants label { display:flex; align-items:center; gap:6px; margin:0; font-weight:400; }
+    .export-status { margin-top:12px; padding:12px; border-radius:8px; background:#f3f4f6; }
+    .export-status progress { width:100%; margin-top:8px; }
+    #exportVideoDialog { max-height:90vh; overflow-y:auto; }
+    @media(max-width:600px){ .export-grid,.export-participants{grid-template-columns:1fr;} }
     @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
   </style>
 </head>
@@ -122,6 +132,7 @@
   <button id="createExerciseButton" type="button" hidden>תרגיל חדש</button>
   <button id="renameExerciseButton" type="button" hidden>שנה שם</button>
   <button id="closeExerciseButton" type="button" hidden>סגור תרגיל</button>
+  <button id="exportVideoButton" type="button" disabled>ייצוא וידאו</button>
   <button id="deleteExerciseButton" class="danger-button" type="button" hidden>מחק תרגיל</button>
   <span id="currentUserLabel"></span>
   <button id="logoutButton" type="button">יציאה</button>
@@ -253,6 +264,59 @@
     </div>
   </form>
 </dialog>
+<dialog id="exportVideoDialog" aria-labelledby="exportVideoTitle">
+  <form id="exportVideoForm" class="event-dialog">
+    <h2 id="exportVideoTitle">ייצוא תרגיל לווידאו</h2>
+    <label>משתתפים בווידאו</label>
+    <div id="exportParticipants" class="export-participants"></div>
+    <div class="export-grid">
+      <label>סוג מפה
+        <select id="exportMapStyle">
+          <option value="map">מפה</option>
+          <option value="satellite">לוויין</option>
+          <option value="hybrid">תצוגה משולבת</option>
+        </select>
+      </label>
+      <label>איכות
+        <select id="exportQuality">
+          <option value="720p">רגילה — 720p</option>
+          <option value="1080p">גבוהה — 1080p</option>
+        </select>
+      </label>
+      <label>נקודות בשנייה
+        <input id="exportPlaybackRate" type="number" min="1" max="100" step="1" value="10" required />
+      </label>
+      <label>אורך השובל
+        <select id="exportTrailLength">
+          <option value="10">10 נקודות</option>
+          <option value="30">30 נקודות</option>
+          <option value="50">50 נקודות</option>
+          <option value="100">100 נקודות</option>
+        </select>
+      </label>
+      <label>התחלה — ריק עבור תחילת התרגיל
+        <input id="exportStartTime" type="datetime-local" step="1" />
+      </label>
+      <label>סיום — ריק עבור סוף התרגיל
+        <input id="exportEndTime" type="datetime-local" step="1" />
+      </label>
+      <label class="export-check"><input id="exportTrailEnabled" type="checkbox" /> הצג שובל בלבד</label>
+      <label class="export-check"><input id="exportEventsEnabled" type="checkbox" /> הצג אירועים</label>
+      <label class="export-check"><input id="exportNamesEnabled" type="checkbox" /> הצג שמות משתתפים</label>
+      <label class="export-check"><input id="exportHeaderEnabled" type="checkbox" checked /> הצג שם תרגיל וזמן</label>
+    </div>
+    <div id="exportVideoError" class="event-dialog-error"></div>
+    <div id="exportVideoStatus" class="export-status" hidden>
+      <div id="exportVideoStatusText"></div>
+      <progress id="exportVideoProgress" max="100" value="0"></progress>
+    </div>
+    <div class="event-dialog-actions">
+      <button id="createVideoExportButton" type="submit">צור וידאו</button>
+      <button id="downloadVideoExportButton" type="button" hidden>הורד וידאו</button>
+      <button id="cancelVideoExportButton" type="button">סגור</button>
+    </div>
+  </form>
+</dialog>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
 const mapBaseLayerStorageKey = 'retraceMapBaseLayer';
@@ -324,6 +388,8 @@ let currentUser = null;
 let eventLocationMap = null;
 let eventLocationMarker = null;
 let selectedEventLatLng = null;
+let currentVideoExport = null;
+let videoExportPollTimer = null;
 
 function canReportWebEvent() {
   return currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'MANAGER');
@@ -434,10 +500,16 @@ async function loadExercise(id) {
   leaveLiveView();
   clearEvents();
   clearTracks();
+  if (videoExportPollTimer !== null) {
+    clearInterval(videoExportPollTimer);
+    videoExportPollTimer = null;
+  }
+  currentVideoExport = null;
   currentExercise = id;
-  const [data, eventData] = await Promise.all([
+  const [data, eventData, exportData] = await Promise.all([
     api(`/exercises/${id}/map-bootstrap`),
-    api(`/exercises/${id}/events`)
+    api(`/exercises/${id}/events`),
+    api(`/exercises/${id}/exports`)
   ]);
   if (id !== currentExercise) return;
   loadedEvents = normalizeEvents(eventData.items);
@@ -455,6 +527,11 @@ async function loadExercise(id) {
   eventsCheckbox.checked = false;
   eventsCheckbox.disabled = !loadedEvents.length;
   document.getElementById('liveViewButton').disabled = currentExerciseStatus !== 'ACTIVE';
+  document.getElementById('exportVideoButton').disabled = !data.participants.some(participant => participant.pointCount > 0);
+  currentVideoExport = exportData.items[0] || null;
+  if (currentVideoExport?.status === 'QUEUED' || currentVideoExport?.status === 'PROCESSING') {
+    videoExportPollTimer = setInterval(pollVideoExport, 2000);
+  }
 }
 
 function renderEventAvailability() {
@@ -1318,6 +1395,156 @@ function updateTimeline(preserveTimestamp = null, showLatest = false) {
   setPlaybackPosition(targetIndex);
 }
 
+function currentExportMapStyle() {
+  const saved = localStorage.getItem(mapBaseLayerStorageKey);
+  if (saved === 'לוויין') return 'satellite';
+  if (saved === 'תצוגה משולבת') return 'hybrid';
+  return 'map';
+}
+
+function populateExportParticipants() {
+  const root = document.getElementById('exportParticipants');
+  root.innerHTML = '';
+  const selectedIds = new Set([...participantControls.values()]
+    .filter(control => control.checkbox.checked)
+    .map(control => control.participant.id));
+  const useAllParticipants = selectedIds.size === 0;
+  exerciseParticipants.filter(participant => participant.pointCount > 0).forEach(participant => {
+    const label = document.createElement('label');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'export-participant-checkbox';
+    checkbox.value = participant.id;
+    checkbox.checked = useAllParticipants || selectedIds.has(participant.id);
+    const name = document.createElement('span');
+    name.textContent = participant.displayName;
+    label.append(checkbox, name);
+    root.appendChild(label);
+  });
+}
+
+function updateVideoExportStatus(job) {
+  currentVideoExport = job;
+  const statusRoot = document.getElementById('exportVideoStatus');
+  const statusText = document.getElementById('exportVideoStatusText');
+  const progress = document.getElementById('exportVideoProgress');
+  const createButton = document.getElementById('createVideoExportButton');
+  const downloadButton = document.getElementById('downloadVideoExportButton');
+  statusRoot.hidden = false;
+  progress.value = job.progress || 0;
+  const labels = {
+    QUEUED: 'הווידאו ממתין בתור…',
+    PROCESSING: `יוצר וידאו — ${job.progress || 0}%`,
+    READY: 'הווידאו מוכן להורדה.',
+    FAILED: 'יצירת הווידאו נכשלה.'
+  };
+  statusText.textContent = labels[job.status] || job.status;
+  createButton.disabled = job.status === 'QUEUED' || job.status === 'PROCESSING';
+  downloadButton.hidden = job.status !== 'READY';
+  if (job.status === 'FAILED') {
+    document.getElementById('exportVideoError').textContent = job.error || 'יצירת הווידאו נכשלה.';
+  }
+}
+
+async function pollVideoExport() {
+  if (!currentVideoExport) return;
+  try {
+    const job = await api(`/exports/${currentVideoExport.id}`);
+    updateVideoExportStatus(job);
+    if (job.status === 'READY' || job.status === 'FAILED') {
+      clearInterval(videoExportPollTimer);
+      videoExportPollTimer = null;
+    }
+  } catch (error) {
+    document.getElementById('exportVideoError').textContent = `בדיקת מצב הייצוא נכשלה: ${error.message}`;
+  }
+}
+
+function openVideoExportDialog() {
+  if (!currentExercise) return alert('יש לבחור תרגיל.');
+  populateExportParticipants();
+  document.getElementById('exportMapStyle').value = currentExportMapStyle();
+  document.getElementById('exportPlaybackRate').value = String(selectedPlaybackRate());
+  document.getElementById('exportTrailEnabled').checked = document.getElementById('trailEnabled').checked;
+  document.getElementById('exportTrailLength').value = document.getElementById('trailLength').value;
+  document.getElementById('exportEventsEnabled').checked = document.getElementById('eventsEnabled').checked;
+  document.getElementById('exportNamesEnabled').checked = document.getElementById('participantNamesEnabled').checked;
+  document.getElementById('exportVideoError').textContent = '';
+  if (currentVideoExport) updateVideoExportStatus(currentVideoExport);
+  else document.getElementById('exportVideoStatus').hidden = true;
+  document.getElementById('exportVideoDialog').showModal();
+}
+
+async function submitVideoExport(event) {
+  event.preventDefault();
+  const errorRoot = document.getElementById('exportVideoError');
+  const button = document.getElementById('createVideoExportButton');
+  errorRoot.textContent = '';
+  const participantIds = [...document.querySelectorAll('.export-participant-checkbox:checked')]
+    .map(checkbox => checkbox.value);
+  if (!participantIds.length) {
+    errorRoot.textContent = 'יש לבחור לפחות משתתף אחד.';
+    return;
+  }
+  const startValue = document.getElementById('exportStartTime').value;
+  const endValue = document.getElementById('exportEndTime').value;
+  try {
+    button.disabled = true;
+    const job = await api(`/exercises/${currentExercise}/exports`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        participant_ids:participantIds,
+        map_style:document.getElementById('exportMapStyle').value,
+        show_events:document.getElementById('exportEventsEnabled').checked,
+        trail_enabled:document.getElementById('exportTrailEnabled').checked,
+        trail_length:Number(document.getElementById('exportTrailLength').value),
+        show_participant_names:document.getElementById('exportNamesEnabled').checked,
+        points_per_second:Number(document.getElementById('exportPlaybackRate').value),
+        quality:document.getElementById('exportQuality').value,
+        start_time:startValue ? new Date(startValue).toISOString() : null,
+        end_time:endValue ? new Date(endValue).toISOString() : null,
+        show_header:document.getElementById('exportHeaderEnabled').checked
+      })
+    });
+    updateVideoExportStatus(job);
+    if (videoExportPollTimer !== null) clearInterval(videoExportPollTimer);
+    videoExportPollTimer = setInterval(pollVideoExport, 2000);
+  } catch (error) {
+    errorRoot.textContent = `יצירת הייצוא נכשלה: ${error.message}`;
+    button.disabled = false;
+  }
+}
+
+async function downloadVideoExport() {
+  if (!currentVideoExport || currentVideoExport.status !== 'READY') return;
+  const button = document.getElementById('downloadVideoExportButton');
+  button.disabled = true;
+  try {
+    const response = await authenticatedFetch(`/api/v1/exports/${currentVideoExport.id}/download`);
+    if (!response.ok) throw new Error(await response.text());
+    const blobUrl = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = currentVideoExport.fileName || 'ReTrace-export.mp4';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch (error) {
+    document.getElementById('exportVideoError').textContent = `הורדת הווידאו נכשלה: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.getElementById('exportVideoButton').onclick = openVideoExportDialog;
+document.getElementById('exportVideoForm').onsubmit = submitVideoExport;
+document.getElementById('cancelVideoExportButton').onclick = () => {
+  document.getElementById('exportVideoDialog').close();
+};
+document.getElementById('downloadVideoExportButton').onclick = downloadVideoExport;
+
 document.getElementById('playPauseButton').onclick = () => {
   if (playbackTimer === null) startPlayback();
   else pausePlayback();
@@ -1468,6 +1695,9 @@ document.getElementById('deleteExerciseForm').onsubmit = async event => {
     currentExerciseCreatedAt = null;
     exerciseParticipants = [];
     participantControls.clear();
+    if (videoExportPollTimer !== null) clearInterval(videoExportPollTimer);
+    videoExportPollTimer = null;
+    currentVideoExport = null;
     document.getElementById('exerciseSelect').value = '';
     document.getElementById('exerciseName').textContent = 'לא נבחר תרגיל';
     document.getElementById('exerciseStatus').textContent = '';
@@ -1476,6 +1706,7 @@ document.getElementById('deleteExerciseForm').onsubmit = async event => {
     document.getElementById('eventAvailability').textContent = 'בחר תרגיל כדי לבדוק אם קיימים אירועים';
     document.getElementById('eventAvailability').classList.remove('has-events');
     document.getElementById('liveViewButton').disabled = true;
+    document.getElementById('exportVideoButton').disabled = true;
     updateTimeline();
     await loadExercises();
     alert(`התרגיל "${exerciseName}" וכל הנתונים המשויכים אליו נמחקו לצמיתות.`);

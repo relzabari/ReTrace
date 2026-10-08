@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <style>
+    * { box-sizing:border-box; }
+    html,body { width:100%; height:100%; margin:0; overflow:hidden; font-family:Arial,sans-serif; background:#dfe8ec; }
+    body { display:flex; flex-direction:column; }
+    #videoHeader { min-height:68px; padding:10px 18px; display:flex; align-items:center; gap:18px; color:#fff; background:#17202a; }
+    #videoHeader[hidden] { display:none; }
+    #exerciseTitle { margin:0 auto 0 0; font-size:22px; }
+    #videoTime { font-size:16px; font-variant-numeric:tabular-nums; }
+    #legend { display:flex; gap:12px; align-items:center; flex-wrap:wrap; font-size:13px; }
+    .legend-item { display:flex; gap:5px; align-items:center; }
+    .legend-color { width:11px; height:11px; border-radius:50%; }
+    #map { flex:1; min-height:0; direction:ltr; }
+    .hybrid-osm-overlay { mix-blend-mode:multiply; }
+    .track-arrow-icon { overflow:visible !important; background:transparent; border:0; }
+    .track-arrow-content { position:relative; display:block; width:20px; height:20px; }
+    .track-arrow { display:block; width:20px; height:20px; background:var(--arrow-color); clip-path:polygon(50% 0,100% 100%,50% 72%,0 100%); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); transform-origin:50% 50%; }
+    .track-arrow-name { position:absolute; left:50%; top:-8px; transform:translate(-50%,-100%); padding:5px 8px; border:1px solid #d1d5db; border-radius:6px; background:#fff; color:#17202a; box-shadow:0 2px 7px #0003; direction:rtl; font-size:12px; font-weight:700; line-height:1.2; white-space:nowrap; }
+    .event-icon { background:transparent; border:0; }
+    .event-star { display:block; width:20px; height:20px; background:#dc2626; clip-path:polygon(50% 0,61% 28%,85% 8%,76% 38%,100% 42%,73% 55%,91% 82%,62% 69%,50% 100%,39% 70%,9% 84%,27% 56%,0 43%,26% 38%,14% 9%,39% 28%); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 2px #991b1b); }
+    .event-star.blinking { animation:eventBlink .5s steps(1,end) infinite; }
+    @keyframes eventBlink { 0%,49%{opacity:1;transform:scale(1.08)} 50%,100%{opacity:.18;transform:scale(.88)} }
+    .event-label { direction:rtl; border:1px solid #dc2626; color:#7f1d1d; font-weight:700; white-space:normal; text-align:right; max-width:260px; }
+    #error { position:fixed; inset:0; z-index:9999; display:grid; place-items:center; padding:30px; color:#991b1b; background:#fff; font-size:24px; text-align:center; }
+    #error:empty { display:none; }
+  </style>
+</head>
+<body>
+  <header id="videoHeader">
+    <h1 id="exerciseTitle"></h1>
+    <div id="legend"></div>
+    <time id="videoTime"></time>
+  </header>
+  <div id="map"></div>
+  <div id="error"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    window.exportReady = false;
+    window.exportComplete = false;
+    window.exportProgress = 0;
+    window.exportDurationSeconds = 2;
+
+    const token = new URLSearchParams(location.hash.slice(1)).get('token');
+    history.replaceState(null, '', location.pathname);
+    const jobId = location.pathname.split('/').filter(Boolean).pop();
+    const map = L.map('map', {zoomControl:false, attributionControl:true, preferCanvas:true});
+    let exportData;
+    let timeline = [];
+    const renderedTracks = [];
+    const renderedEvents = new Map();
+
+    function formatTime(timestamp) {
+      return new Intl.DateTimeFormat('he-IL', {dateStyle:'short', timeStyle:'medium'}).format(new Date(timestamp));
+    }
+
+    function baseLayer(style) {
+      if (style === 'satellite') {
+        return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+          maxZoom:20, attribution:'Tiles &copy; Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+        });
+      }
+      if (style === 'hybrid') {
+        return L.layerGroup([
+          L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom:20, attribution:'Tiles &copy; Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+          }),
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxNativeZoom:19, maxZoom:20, opacity:.72, className:'hybrid-osm-overlay',
+            attribution:'&copy; OpenStreetMap contributors'
+          })
+        ]);
+      }
+      return L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxNativeZoom:19, maxZoom:20, attribution:'&copy; OpenStreetMap contributors'
+      });
+    }
+
+    function bearingBetween(from, to) {
+      const rad = value => value * Math.PI / 180;
+      const lat1 = rad(from[0]);
+      const lat2 = rad(to[0]);
+      const delta = rad(to[1] - from[1]);
+      const y = Math.sin(delta) * Math.cos(lat2);
+      const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(delta);
+      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+
+    function arrowIcon(track, bearing) {
+      const content = document.createElement('span');
+      content.className = 'track-arrow-content';
+      const arrow = document.createElement('span');
+      arrow.className = 'track-arrow';
+      arrow.style.setProperty('--arrow-color', track.color);
+      arrow.style.transform = `rotate(${bearing}deg)`;
+      content.appendChild(arrow);
+      if (exportData.config.show_participant_names) {
+        const name = document.createElement('span');
+        name.className = 'track-arrow-name';
+        name.textContent = track.displayName;
+        content.appendChild(name);
+      }
+      return L.divIcon({className:'track-arrow-icon', iconSize:[20,20], iconAnchor:[10,10], html:content});
+    }
+
+    function eventIcon(blinking) {
+      return L.divIcon({
+        className:'event-icon', iconSize:[20,20], iconAnchor:[10,10],
+        html:`<span class="event-star${blinking ? ' blinking' : ''}"></span>`
+      });
+    }
+
+    function visibleCount(points, timestamp) {
+      let low = 0;
+      let high = points.length;
+      while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (points[middle].time <= timestamp) low = middle + 1;
+        else high = middle;
+      }
+      return low;
+    }
+
+    function rebuildTrack(rendered, timestamp) {
+      const count = visibleCount(rendered.track.points, timestamp);
+      const trailLength = exportData.config.trail_enabled ? exportData.config.trail_length : count;
+      const start = Math.max(0, count - trailLength);
+      if (count === rendered.count && start === rendered.start) return;
+      const visible = rendered.track.points.slice(start, count);
+      rendered.line.setLatLngs(visible.map(point => point.latlng));
+      rendered.points.clearLayers();
+      visible.forEach(point => L.circleMarker(point.latlng, {
+        radius:3.5, color:'#fff', weight:1, fillColor:rendered.track.color, fillOpacity:.92, interactive:false
+      }).addTo(rendered.points));
+      if (count >= 2) {
+        const latest = rendered.track.points[count - 1];
+        let previousIndex = count - 2;
+        while (previousIndex >= start) {
+          const previous = rendered.track.points[previousIndex];
+          if (previous.latitude !== latest.latitude || previous.longitude !== latest.longitude) break;
+          previousIndex--;
+        }
+        if (previousIndex >= start) {
+          rendered.arrow.setLatLng(latest.latlng).setIcon(arrowIcon(
+            rendered.track,
+            bearingBetween(rendered.track.points[previousIndex].latlng, latest.latlng)
+          ));
+          if (!map.hasLayer(rendered.arrow)) rendered.arrow.addTo(map);
+        }
+      } else if (map.hasLayer(rendered.arrow)) {
+        map.removeLayer(rendered.arrow);
+      }
+      rendered.count = count;
+      rendered.start = start;
+    }
+
+    function revealEvents(timestamp) {
+      exportData.events.forEach(event => {
+        if (event.time > timestamp || renderedEvents.has(event.id)) return;
+        const marker = L.marker(event.latlng, {icon:eventIcon(true), zIndexOffset:900}).addTo(map);
+        const label = document.createElement('div');
+        const title = document.createElement('strong');
+        title.textContent = event.description;
+        const details = document.createElement('div');
+        details.textContent = `${event.reporterName} — ${event.reporterRole}`;
+        label.append(title, details);
+        marker.bindTooltip(label, {permanent:true, direction:'top', offset:[0,-12], className:'event-label'}).openTooltip();
+        setTimeout(() => {
+          marker.setIcon(eventIcon(false));
+          marker.closeTooltip();
+          marker.unbindTooltip();
+        }, 5000);
+        renderedEvents.set(event.id, marker);
+      });
+    }
+
+    function renderAt(timestamp) {
+      renderedTracks.forEach(track => rebuildTrack(track, timestamp));
+      revealEvents(timestamp);
+      document.getElementById('videoTime').textContent = formatTime(timestamp);
+    }
+
+    async function initialize() {
+      try {
+        const response = await fetch(`/api/v1/exports/${jobId}/render-data`, {
+          headers:{'X-Export-Token':token || ''}
+        });
+        if (!response.ok) throw new Error(`טעינת נתוני הייצוא נכשלה (${response.status})`);
+        exportData = await response.json();
+        document.getElementById('videoHeader').hidden = !exportData.config.show_header;
+        document.getElementById('exerciseTitle').textContent = exportData.exercise.name;
+        const legend = document.getElementById('legend');
+        const bounds = L.latLngBounds([]);
+        exportData.tracks.forEach(track => {
+          track.points = track.points.map(point => ({
+            ...point, time:Date.parse(point.timestamp), latlng:[point.latitude,point.longitude]
+          }));
+          track.points.forEach(point => bounds.extend(point.latlng));
+          const item = document.createElement('span');
+          item.className = 'legend-item';
+          const color = document.createElement('i');
+          color.className = 'legend-color';
+          color.style.background = track.color;
+          const name = document.createElement('span');
+          name.textContent = track.displayName;
+          item.append(color, name);
+          legend.appendChild(item);
+          renderedTracks.push({
+            track,
+            line:L.polyline([], {color:track.color, weight:4, opacity:.88}).addTo(map),
+            points:L.layerGroup().addTo(map),
+            arrow:L.marker(track.points[0].latlng, {interactive:false, keyboard:false, zIndexOffset:1000}),
+            count:0, start:0
+          });
+        });
+        exportData.events = exportData.events.map(event => ({
+          ...event, time:Date.parse(event.timestamp), latlng:[event.latitude,event.longitude]
+        }));
+        exportData.events.forEach(event => bounds.extend(event.latlng));
+        timeline = [
+          ...exportData.tracks.flatMap(track => track.points.map(point => point.time)),
+          ...exportData.events.map(event => event.time)
+        ].sort((a,b) => a-b);
+        if (!timeline.length || !bounds.isValid()) throw new Error('אין נתונים ליצירת הווידאו.');
+        baseLayer(exportData.config.map_style).addTo(map);
+        map.fitBounds(bounds, {padding:[70,70], maxZoom:17, animate:false});
+        renderAt(timeline[0]);
+        const playbackSeconds = Math.max(0, (timeline.length - 1) / exportData.config.points_per_second);
+        window.exportDurationSeconds = Math.max(2, playbackSeconds + 1.5);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        window.exportReady = true;
+      } catch (error) {
+        document.getElementById('error').textContent = error.message;
+        window.exportFailure = error.message;
+      }
+    }
+
+    window.startExportPlayback = () => {
+      if (!window.exportReady || window.exportStarted) return;
+      window.exportStarted = true;
+      const startedAt = performance.now();
+      const rate = exportData.config.points_per_second;
+      const playbackSeconds = Math.max(0, (timeline.length - 1) / rate);
+      function frame(now) {
+        const elapsed = (now - startedAt) / 1000;
+        const index = Math.min(timeline.length - 1, Math.floor(elapsed * rate));
+        renderAt(timeline[index]);
+        window.exportProgress = Math.min(94, 5 + (elapsed / Math.max(playbackSeconds,.01)) * 89);
+        if (elapsed < playbackSeconds + 1.25) requestAnimationFrame(frame);
+        else {
+          renderAt(timeline[timeline.length - 1]);
+          window.exportProgress = 95;
+          window.exportComplete = true;
+        }
+      }
+      requestAnimationFrame(frame);
+    };
+
+    initialize();
+  </script>
+</body>
+</html>

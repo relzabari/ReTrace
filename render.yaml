@@ -20,3 +20,5 @@ services:
         sync: false
       - key: PASSWORD_RESET_REDIRECT_URL
         value: https://retrace-exercise-platform.onrender.com/
+      - key: PUBLIC_BASE_URL
+        value: https://retrace-exercise-platform.onrender.com

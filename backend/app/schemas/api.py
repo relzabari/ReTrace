@@ -87,3 +87,17 @@ class WebEventCreate(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
     description: str = Field(min_length=1, max_length=4000)
+
+
+class VideoExportCreate(BaseModel):
+    participant_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    map_style: Literal["map", "satellite", "hybrid"] = "map"
+    show_events: bool = True
+    trail_enabled: bool = False
+    trail_length: Literal[10, 30, 50, 100] = 30
+    show_participant_names: bool = False
+    points_per_second: int = Field(default=10, ge=1, le=100)
+    quality: Literal["720p", "1080p"] = "720p"
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    show_header: bool = True
