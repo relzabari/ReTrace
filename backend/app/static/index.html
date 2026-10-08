@@ -73,9 +73,11 @@
     .event-explosion.blinking { animation:eventExplosionBlink .5s steps(1,end) infinite; }
     @keyframes eventExplosionBlink { 0%, 49% { opacity:1; transform:scale(1.08); } 50%, 100% { opacity:.18; transform:scale(.88); } }
     .event-live-label { direction:rtl; border:1px solid #dc2626; color:#7f1d1d; font-weight:700; white-space:normal; text-align:right; max-width:220px; }
-    .track-arrow-icon { background:transparent; border:0; }
+    .track-arrow-icon { overflow:visible !important; background:transparent; border:0; }
+    .track-arrow-content { position:relative; display:block; width:20px; height:20px; }
     .track-arrow { display:block; width:20px; height:20px; background:var(--arrow-color); clip-path:polygon(50% 0, 100% 100%, 50% 72%, 0 100%); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); transform-origin:50% 50%; }
-    .participant-name-tooltip { direction:rtl; font-weight:700; white-space:nowrap; }
+    .track-arrow-name { position:absolute; left:50%; top:-8px; transform:translate(-50%, -100%); visibility:hidden; opacity:0; padding:5px 8px; border:1px solid #d1d5db; border-radius:6px; background:#fff; color:#17202a; box-shadow:0 2px 7px #0003; direction:rtl; font-size:12px; font-weight:700; line-height:1.2; white-space:nowrap; pointer-events:none; transition:opacity .12s ease; }
+    .track-arrow-icon:hover .track-arrow-name, .track-arrow-icon.show-participant-name .track-arrow-name { visibility:visible; opacity:1; }
     .user-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:6px; padding:8px 0; border-bottom:1px solid #eee; direction:ltr; }
     .user-row:last-child { border-bottom:0; }
     .user-row span { overflow:hidden; text-overflow:ellipsis; font-size:12px; }
@@ -666,7 +668,12 @@ async function toggleTrack(participant, checkbox, color) {
     interactive: true,
     keyboard: false,
     zIndexOffset: 1000,
-    icon: createArrowIcon(color, 0)
+    icon: createArrowIcon(
+      color,
+      0,
+      data.displayName,
+      document.getElementById('participantNamesEnabled').checked
+    )
   });
   visibleTracks.set(participant.id, {
     data,
@@ -675,6 +682,7 @@ async function toggleTrack(participant, checkbox, color) {
     allLatLngs: timedPoints.map(point => point.latlng),
     visiblePointCount: 0,
     visibleStartIndex: 0,
+    currentBearing: 0,
     line,
     pointLayer,
     startMarker,
@@ -783,29 +791,34 @@ function bearingBetween(from, to) {
   return (toDegrees(Math.atan2(y, x)) + 360) % 360;
 }
 
-function createArrowIcon(color, bearing) {
+function createArrowIcon(color, bearing, participantName, showPermanently) {
+  const content = document.createElement('span');
+  content.className = 'track-arrow-content';
+  const arrow = document.createElement('span');
+  arrow.className = 'track-arrow';
+  arrow.style.setProperty('--arrow-color', color);
+  arrow.style.transform = `rotate(${bearing}deg)`;
+  const name = document.createElement('span');
+  name.className = 'track-arrow-name';
+  name.textContent = participantName;
+  content.append(arrow, name);
   return L.divIcon({
-    className: 'track-arrow-icon',
+    className: `track-arrow-icon${showPermanently ? ' show-participant-name' : ''}`,
     iconSize: [20, 20],
     iconAnchor: [10, 10],
-    html: `<span class="track-arrow" style="--arrow-color:${color};transform:rotate(${bearing}deg)"></span>`
+    html: content
   });
 }
 
 function syncParticipantNameTooltip(track) {
   if (!track) return;
   const showPermanently = document.getElementById('participantNamesEnabled').checked;
-  const label = document.createElement('span');
-  label.textContent = track.data.displayName;
-  track.arrowMarker.closeTooltip();
-  track.arrowMarker.unbindTooltip();
-  track.arrowMarker.bindTooltip(label, {
-    permanent: showPermanently,
-    direction: 'top',
-    offset: [0, -12],
-    className: 'participant-name-tooltip'
-  });
-  if (showPermanently && map.hasLayer(track.arrowMarker)) track.arrowMarker.openTooltip();
+  track.arrowMarker.setIcon(createArrowIcon(
+    track.color,
+    track.currentBearing,
+    track.data.displayName,
+    showPermanently
+  ));
 }
 
 function syncAllParticipantNameTooltips() {
@@ -828,13 +841,16 @@ function updateTrackArrow(track, startIndex, pointCount) {
   while (previousIndex >= startIndex) {
     const previous = track.timedPoints[previousIndex].latlng;
     if (previous[0] !== latest[0] || previous[1] !== latest[1]) {
+      track.currentBearing = bearingBetween(previous, latest);
       track.arrowMarker
         .setLatLng(latest)
-        .setIcon(createArrowIcon(track.color, bearingBetween(previous, latest)));
+        .setIcon(createArrowIcon(
+          track.color,
+          track.currentBearing,
+          track.data.displayName,
+          document.getElementById('participantNamesEnabled').checked
+        ));
       if (!map.hasLayer(track.arrowMarker)) track.arrowMarker.addTo(map);
-      if (document.getElementById('participantNamesEnabled').checked) {
-        track.arrowMarker.openTooltip();
-      }
       if (map.hasLayer(track.currentMarker)) map.removeLayer(track.currentMarker);
       return;
     }
