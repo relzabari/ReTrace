@@ -46,16 +46,17 @@ def recover_video_exports() -> None:
                 job.error_message = "The exported video file is no longer available"
                 job.output_path = None
                 job.file_size = None
-        pending = db.scalars(
-            select(VideoExportJob).where(
-                VideoExportJob.status.in_([VideoExportStatus.QUEUED, VideoExportStatus.PROCESSING])
-            )
+        interrupted = db.scalars(
+            select(VideoExportJob).where(VideoExportJob.status == VideoExportStatus.PROCESSING)
         ).all()
-        for job in pending:
-            job.status = VideoExportStatus.QUEUED
+        for job in interrupted:
+            job.status = VideoExportStatus.FAILED
+            job.error_message = "Video rendering was interrupted because the server restarted"
             job.progress = 0
-            job.error_message = None
-        pending_ids = [job.id for job in pending]
+        queued = db.scalars(
+            select(VideoExportJob).where(VideoExportJob.status == VideoExportStatus.QUEUED)
+        ).all()
+        pending_ids = [job.id for job in queued]
         db.commit()
     for job_id in pending_ids:
         enqueue_video_export(job_id)
@@ -111,7 +112,16 @@ def _render_video_export(job_id: uuid.UUID) -> None:
             browser = playwright.chromium.launch(
                 executable_path=settings.chromium_executable,
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--disable-background-networking",
+                    "--renderer-process-limit=1",
+                    "--no-zygote",
+                    "--js-flags=--max-old-space-size=192",
+                ],
             )
             context = browser.new_context(
                 viewport={"width": width, "height": height},

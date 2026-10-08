@@ -131,11 +131,22 @@
       const start = Math.max(0, count - trailLength);
       if (count === rendered.count && start === rendered.start) return;
       const visible = rendered.track.points.slice(start, count);
-      rendered.line.setLatLngs(visible.map(point => point.latlng));
-      rendered.points.clearLayers();
-      visible.forEach(point => L.circleMarker(point.latlng, {
-        radius:3.5, color:'#fff', weight:1, fillColor:rendered.track.color, fillOpacity:.92, interactive:false
-      }).addTo(rendered.points));
+      const canAppend = start === rendered.start && count >= rendered.count;
+      if (canAppend) {
+        for (let index = rendered.count; index < count; index++) {
+          const point = rendered.track.points[index];
+          rendered.line.addLatLng(point.latlng);
+          L.circleMarker(point.latlng, {
+            radius:3.5, color:'#fff', weight:1, fillColor:rendered.track.color, fillOpacity:.92, interactive:false
+          }).addTo(rendered.points);
+        }
+      } else {
+        rendered.line.setLatLngs(visible.map(point => point.latlng));
+        rendered.points.clearLayers();
+        visible.forEach(point => L.circleMarker(point.latlng, {
+          radius:3.5, color:'#fff', weight:1, fillColor:rendered.track.color, fillOpacity:.92, interactive:false
+        }).addTo(rendered.points));
+      }
       if (count >= 2) {
         const latest = rendered.track.points[count - 1];
         let previousIndex = count - 2;
@@ -250,7 +261,7 @@
         const index = Math.min(timeline.length - 1, Math.floor(elapsed * rate));
         renderAt(timeline[index]);
         window.exportProgress = Math.min(94, 5 + (elapsed / Math.max(playbackSeconds,.01)) * 89);
-        if (elapsed < playbackSeconds + 1.25) requestAnimationFrame(frame);
+        if (elapsed < playbackSeconds + 1.25) setTimeout(() => requestAnimationFrame(frame), 40);
         else {
           renderAt(timeline[timeline.length - 1]);
           window.exportProgress = 95;
