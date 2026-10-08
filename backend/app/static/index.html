@@ -46,12 +46,13 @@
     .timeline-controls .rate-control { margin-right:auto; }
     .timeline-controls select { padding:7px 10px; }
     .timeline-controls .custom-rate-input { width:76px; padding:7px 9px; }
-    .timeline-chart { direction:ltr; }
+    .timeline-chart { position:relative; direction:ltr; }
     .timeline-lanes { display:grid; gap:3px; min-height:16px; max-height:64px; overflow-y:auto; margin:0 7px 5px; }
     .timeline-lane { position:relative; height:7px; background:#edf0f2; border-radius:999px; overflow:hidden; }
     .timeline-range { position:absolute; top:0; bottom:0; min-width:4px; border-radius:999px; }
     .timeline-event { position:absolute; top:50%; width:10px; height:10px; border:2px solid #fff; border-radius:50%; background:#dc2626; box-shadow:0 0 0 1px #991b1b; transform:translate(-50%, -50%); }
     #timelineCursor { display:block; width:100%; margin:0; accent-color:#17202a; }
+    .timeline-hover-time { position:absolute; z-index:1000; transform:translate(-50%, -100%); padding:5px 8px; border-radius:6px; background:#17202a; color:#fff; box-shadow:0 2px 8px #0004; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; pointer-events:none; }
     .timeline-labels { display:flex; justify-content:space-between; gap:16px; direction:ltr; margin-top:3px; color:#68737d; font-size:12px; font-variant-numeric:tabular-nums; }
     .timeline-empty { padding:8px 0; text-align:center; color:#68737d; font-size:13px; }
     .card { border:1px solid #e0e0e0; border-radius:10px; padding:12px; margin-bottom:10px; background:#fff; }
@@ -74,6 +75,7 @@
     .event-live-label { direction:rtl; border:1px solid #dc2626; color:#7f1d1d; font-weight:700; white-space:normal; text-align:right; max-width:220px; }
     .track-arrow-icon { background:transparent; border:0; }
     .track-arrow { display:block; width:20px; height:20px; background:var(--arrow-color); clip-path:polygon(50% 0, 100% 100%, 50% 72%, 0 100%); filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); transform-origin:50% 50%; }
+    .participant-name-tooltip { direction:rtl; font-weight:700; white-space:nowrap; }
     .user-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:6px; padding:8px 0; border-bottom:1px solid #eee; direction:ltr; }
     .user-row:last-child { border-bottom:0; }
     .user-row span { overflow:hidden; text-overflow:ellipsis; font-size:12px; }
@@ -196,11 +198,16 @@
           <input id="eventsEnabled" type="checkbox" disabled />
           הצג אירועים
         </label>
+        <label for="participantNamesEnabled">
+          <input id="participantNamesEnabled" type="checkbox" disabled />
+          הצג שמות משתתפים
+        </label>
       </div>
       <div id="timelineEmpty" class="timeline-empty">בחר מסלול אחד לפחות כדי להציג את ציר הזמן.</div>
       <div id="timelineChart" class="timeline-chart" hidden>
         <div id="timelineLanes" class="timeline-lanes"></div>
         <input id="timelineCursor" type="range" aria-label="נקודת הזמן הנוכחית" />
+        <output id="timelineHoverTime" class="timeline-hover-time" hidden></output>
         <div class="timeline-labels">
           <time id="timelineStart"></time>
           <time id="timelineEnd"></time>
@@ -302,6 +309,7 @@ let playbackTimestamps = [];
 let playbackIndex = 0;
 const playbackRateStorageKey = 'retracePlaybackRate';
 const customPlaybackRateStorageKey = 'retraceCustomPlaybackRate';
+const participantNamesStorageKey = 'retraceShowParticipantNames';
 let liveViewTimer = null;
 let liveViewActive = false;
 let liveRefreshRunning = false;
@@ -655,7 +663,7 @@ async function toggleTrack(participant, checkbox, color) {
     weight: 3
   });
   const arrowMarker = L.marker(timedPoints[0].latlng, {
-    interactive: false,
+    interactive: true,
     keyboard: false,
     zIndexOffset: 1000,
     icon: createArrowIcon(color, 0)
@@ -674,6 +682,7 @@ async function toggleTrack(participant, checkbox, color) {
     arrowMarker,
     layers: [line, pointLayer, startMarker, currentMarker, arrowMarker]
   });
+  syncParticipantNameTooltip(visibleTracks.get(participant.id));
   if (!suppressTrackUpdates) {
     renderTrackInfo();
     updateTimeline();
@@ -719,6 +728,28 @@ function formatTimelineTime(timestamp) {
   }).format(new Date(timestamp));
 }
 
+function hideTimelineHoverTime() {
+  document.getElementById('timelineHoverTime').hidden = true;
+}
+
+function showTimelineHoverTime(event) {
+  const cursor = document.getElementById('timelineCursor');
+  if (cursor.disabled || !playbackTimestamps.length) {
+    hideTimelineHoverTime();
+    return;
+  }
+  const cursorBounds = cursor.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (event.clientX - cursorBounds.left) / cursorBounds.width));
+  const start = Number(cursor.min);
+  const end = Number(cursor.max);
+  const pointedTimestamp = start + (end - start) * ratio;
+  const label = document.getElementById('timelineHoverTime');
+  label.textContent = formatTimelineTime(pointedTimestamp);
+  label.style.left = `${cursor.offsetLeft + cursor.clientWidth * ratio}px`;
+  label.style.top = `${cursor.offsetTop - 8}px`;
+  label.hidden = false;
+}
+
 function setPlaybackPosition(index) {
   if (!playbackTimestamps.length) return;
   playbackIndex = Math.max(0, Math.min(index, playbackTimestamps.length - 1));
@@ -761,6 +792,31 @@ function createArrowIcon(color, bearing) {
   });
 }
 
+function syncParticipantNameTooltip(track) {
+  if (!track) return;
+  const showPermanently = document.getElementById('participantNamesEnabled').checked;
+  const label = document.createElement('span');
+  label.textContent = track.data.displayName;
+  track.arrowMarker.closeTooltip();
+  track.arrowMarker.unbindTooltip();
+  track.arrowMarker.bindTooltip(label, {
+    permanent: showPermanently,
+    direction: 'top',
+    offset: [0, -12],
+    className: 'participant-name-tooltip'
+  });
+  if (showPermanently && map.hasLayer(track.arrowMarker)) track.arrowMarker.openTooltip();
+}
+
+function syncAllParticipantNameTooltips() {
+  visibleTracks.forEach(syncParticipantNameTooltip);
+}
+
+function restoreParticipantNamesPreference() {
+  document.getElementById('participantNamesEnabled').checked =
+    localStorage.getItem(participantNamesStorageKey) === 'true';
+}
+
 function updateTrackArrow(track, startIndex, pointCount) {
   if (pointCount < 2) {
     if (map.hasLayer(track.arrowMarker)) map.removeLayer(track.arrowMarker);
@@ -776,6 +832,9 @@ function updateTrackArrow(track, startIndex, pointCount) {
         .setLatLng(latest)
         .setIcon(createArrowIcon(track.color, bearingBetween(previous, latest)));
       if (!map.hasLayer(track.arrowMarker)) track.arrowMarker.addTo(map);
+      if (document.getElementById('participantNamesEnabled').checked) {
+        track.arrowMarker.openTooltip();
+      }
       if (map.hasLayer(track.currentMarker)) map.removeLayer(track.currentMarker);
       return;
     }
@@ -1140,6 +1199,7 @@ function findNearestPlaybackIndex(timestamp) {
 
 function updateTimeline(preserveTimestamp = null, showLatest = false) {
   pausePlayback();
+  hideTimelineHoverTime();
   const empty = document.getElementById('timelineEmpty');
   const chart = document.getElementById('timelineChart');
   const current = document.getElementById('timelineCurrent');
@@ -1147,9 +1207,9 @@ function updateTimeline(preserveTimestamp = null, showLatest = false) {
   const cursor = document.getElementById('timelineCursor');
   const playPauseButton = document.getElementById('playPauseButton');
   const stopButton = document.getElementById('stopButton');
-  const rateSelect = document.getElementById('playbackRate');
   const trailCheckbox = document.getElementById('trailEnabled');
   const trailSelect = document.getElementById('trailLength');
+  const participantNamesCheckbox = document.getElementById('participantNamesEnabled');
   const trackTimestamps = [...visibleTracks.values()]
     .flatMap(track => track.data.points.map(point => Date.parse(point.capturedAt)))
     .filter(Number.isFinite);
@@ -1182,6 +1242,8 @@ function updateTimeline(preserveTimestamp = null, showLatest = false) {
     setPlaybackRateDisabled(true);
     trailCheckbox.disabled = true;
     trailSelect.disabled = true;
+    participantNamesCheckbox.disabled = true;
+    hideTimelineHoverTime();
     renderEventsAtTime(Number.NEGATIVE_INFINITY);
     return;
   }
@@ -1231,6 +1293,7 @@ function updateTimeline(preserveTimestamp = null, showLatest = false) {
   cursor.disabled = liveViewActive;
   trailCheckbox.disabled = false;
   trailSelect.disabled = !trailCheckbox.checked;
+  participantNamesCheckbox.disabled = !visibleTracks.size;
   const targetIndex = showLatest
     ? playbackTimestamps.length - 1
     : preserveTimestamp === null
@@ -1274,6 +1337,12 @@ document.getElementById('eventsEnabled').onchange = event => {
   }
   updateTimeline(previousTimestamp, liveViewActive);
 };
+document.getElementById('participantNamesEnabled').onchange = event => {
+  localStorage.setItem(participantNamesStorageKey, String(event.target.checked));
+  syncAllParticipantNameTooltips();
+};
+document.getElementById('timelineCursor').onpointermove = showTimelineHoverTime;
+document.getElementById('timelineCursor').onpointerleave = hideTimelineHoverTime;
 document.getElementById('timelineCursor').oninput = event => {
   pausePlayback();
   setPlaybackPosition(findNearestPlaybackIndex(Number(event.target.value)));
@@ -1502,6 +1571,7 @@ document.getElementById('logoutButton').onclick = () => {
 };
 
 restorePlaybackRate();
+restoreParticipantNamesPreference();
 initializeAuth();
 </script>
 </body>
