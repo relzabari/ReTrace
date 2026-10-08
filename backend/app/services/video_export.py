@@ -47,19 +47,15 @@ def recover_video_exports() -> None:
                 job.output_path = None
                 job.file_size = None
         interrupted = db.scalars(
-            select(VideoExportJob).where(VideoExportJob.status == VideoExportStatus.PROCESSING)
+            select(VideoExportJob).where(
+                VideoExportJob.status.in_([VideoExportStatus.QUEUED, VideoExportStatus.PROCESSING])
+            )
         ).all()
         for job in interrupted:
             job.status = VideoExportStatus.FAILED
-            job.error_message = "Video rendering was interrupted because the server restarted"
+            job.error_message = "Video rendering did not complete before the server restarted; start a new export manually"
             job.progress = 0
-        queued = db.scalars(
-            select(VideoExportJob).where(VideoExportJob.status == VideoExportStatus.QUEUED)
-        ).all()
-        pending_ids = [job.id for job in queued]
         db.commit()
-    for job_id in pending_ids:
-        enqueue_video_export(job_id)
 
 
 def _update_job(job_id: uuid.UUID, **values) -> None:
