@@ -109,6 +109,8 @@
     .export-status { margin-top:12px; padding:12px; border-radius:8px; background:#f3f4f6; }
     .export-status progress { width:100%; margin-top:8px; }
     #exportVideoDialog { max-height:90vh; overflow-y:auto; }
+    #exportCanvas { width:100%; margin-top:12px; border-radius:8px; background:#dbe5e9; }
+    .export-local-note { margin:10px 0 0; color:#4b5563; font-size:13px; line-height:1.45; }
     @media(max-width:600px){ .export-grid,.export-participants{grid-template-columns:1fr;} }
     @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
   </style>
@@ -310,6 +312,8 @@
       <div id="exportVideoStatusText"></div>
       <progress id="exportVideoProgress" max="100" value="0"></progress>
     </div>
+    <canvas id="exportCanvas" hidden></canvas>
+    <p class="export-local-note">הווידאו נוצר במחשב זה. יש להשאיר את החלון והלשונית פתוחים עד לסיום.</p>
     <div class="event-dialog-actions">
       <button id="createVideoExportButton" type="submit">צור וידאו</button>
       <button id="downloadVideoExportButton" type="button" hidden>הורד וידאו</button>
@@ -516,10 +520,9 @@ async function loadExercise(id) {
   }
   currentVideoExport = null;
   currentExercise = id;
-  const [data, eventData, exportData] = await Promise.all([
+  const [data, eventData] = await Promise.all([
     api(`/exercises/${id}/map-bootstrap`),
-    api(`/exercises/${id}/events`),
-    api(`/exercises/${id}/exports`)
+    api(`/exercises/${id}/events`)
   ]);
   if (id !== currentExercise) return;
   loadedEvents = normalizeEvents(eventData.items);
@@ -538,10 +541,6 @@ async function loadExercise(id) {
   eventsCheckbox.disabled = !loadedEvents.length;
   document.getElementById('liveViewButton').disabled = currentExerciseStatus !== 'ACTIVE';
   document.getElementById('exportVideoButton').disabled = !data.participants.some(participant => participant.pointCount > 0);
-  currentVideoExport = exportData.items[0] || null;
-  if (currentVideoExport?.status === 'QUEUED' || currentVideoExport?.status === 'PROCESSING') {
-    videoExportPollTimer = setInterval(pollVideoExport, 10000);
-  }
 }
 
 function renderEventAvailability() {
@@ -1480,15 +1479,301 @@ function openVideoExportDialog() {
   document.getElementById('exportEventsEnabled').checked = document.getElementById('eventsEnabled').checked;
   document.getElementById('exportNamesEnabled').checked = document.getElementById('participantNamesEnabled').checked;
   document.getElementById('exportVideoError').textContent = '';
-  if (currentVideoExport) updateVideoExportStatus(currentVideoExport);
-  else document.getElementById('exportVideoStatus').hidden = true;
+  document.getElementById('exportVideoStatus').hidden = true;
+  document.getElementById('exportCanvas').hidden = true;
+  document.getElementById('createVideoExportButton').disabled = false;
+  document.getElementById('downloadVideoExportButton').hidden = true;
   document.getElementById('exportVideoDialog').showModal();
+}
+
+function exportWorldPoint(latitude, longitude, zoom) {
+  const size = 256 * (2 ** zoom);
+  const sinLatitude = Math.sin(Math.max(-85.0511, Math.min(85.0511, latitude)) * Math.PI / 180);
+  return {
+    x:(longitude + 180) / 360 * size,
+    y:(.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * size
+  };
+}
+
+function loadExportTile(url) {
+  return fetch(url, {mode:'cors'})
+    .then(response => {
+      if (!response.ok) throw new Error(`Tile ${response.status}`);
+      return response.blob();
+    })
+    .then(blob => createImageBitmap(blob))
+    .catch(() => null);
+}
+
+async function prepareExportMap(data, width, height, headerHeight) {
+  const coordinates = [
+    ...data.tracks.flatMap(track => track.points.map(point => [point.latitude, point.longitude])),
+    ...data.events.map(item => [item.latitude, item.longitude])
+  ];
+  if (!coordinates.length) throw new Error('אין נתוני מיקום לייצוא.');
+  let zoom = 18;
+  let minPoint;
+  let maxPoint;
+  const mapHeight = height - headerHeight;
+  while (zoom > 2) {
+    const projected = coordinates.map(([lat, lon]) => exportWorldPoint(lat, lon, zoom));
+    minPoint = {x:Infinity, y:Infinity};
+    maxPoint = {x:-Infinity, y:-Infinity};
+    projected.forEach(point => {
+      minPoint.x = Math.min(minPoint.x, point.x);
+      minPoint.y = Math.min(minPoint.y, point.y);
+      maxPoint.x = Math.max(maxPoint.x, point.x);
+      maxPoint.y = Math.max(maxPoint.y, point.y);
+    });
+    if (maxPoint.x - minPoint.x <= width - 120 && maxPoint.y - minPoint.y <= mapHeight - 120) break;
+    zoom--;
+  }
+  if (zoom === 2) {
+    minPoint = {x:Infinity, y:Infinity};
+    maxPoint = {x:-Infinity, y:-Infinity};
+    coordinates.forEach(([lat, lon]) => {
+      const point = exportWorldPoint(lat, lon, zoom);
+      minPoint.x = Math.min(minPoint.x, point.x);
+      minPoint.y = Math.min(minPoint.y, point.y);
+      maxPoint.x = Math.max(maxPoint.x, point.x);
+      maxPoint.y = Math.max(maxPoint.y, point.y);
+    });
+  }
+  const center = {x:(minPoint.x + maxPoint.x) / 2, y:(minPoint.y + maxPoint.y) / 2};
+  const origin = {x:center.x - width / 2, y:center.y - mapHeight / 2};
+  const background = document.createElement('canvas');
+  background.width = width;
+  background.height = mapHeight;
+  const context = background.getContext('2d');
+  context.fillStyle = '#dbe5e9';
+  context.fillRect(0, 0, width, mapHeight);
+  const minTileX = Math.floor(origin.x / 256);
+  const maxTileX = Math.floor((origin.x + width) / 256);
+  const minTileY = Math.floor(origin.y / 256);
+  const maxTileY = Math.floor((origin.y + mapHeight) / 256);
+  const tileCount = 2 ** zoom;
+  const layers = data.config.map_style === 'hybrid'
+    ? [{kind:'satellite', opacity:1}, {kind:'map', opacity:.72}]
+    : [{kind:data.config.map_style, opacity:1}];
+  for (const layer of layers) {
+    const tiles = [];
+    for (let tileY = minTileY; tileY <= maxTileY; tileY++) {
+      if (tileY < 0 || tileY >= tileCount) continue;
+      for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
+        const wrappedX = ((tileX % tileCount) + tileCount) % tileCount;
+        const url = layer.kind === 'satellite'
+          ? `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${tileY}/${wrappedX}`
+          : `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${tileY}.png`;
+        tiles.push(loadExportTile(url).then(image => ({image, tileX, tileY})));
+      }
+    }
+    context.globalAlpha = layer.opacity;
+    for (const tile of await Promise.all(tiles)) {
+      if (tile.image) context.drawImage(tile.image, tile.tileX * 256 - origin.x, tile.tileY * 256 - origin.y, 256, 256);
+    }
+    context.globalAlpha = 1;
+  }
+  return {
+    background,
+    project:(latitude, longitude) => {
+      const point = exportWorldPoint(latitude, longitude, zoom);
+      return {x:point.x - origin.x, y:point.y - origin.y + headerHeight};
+    }
+  };
+}
+
+function exportVisibleCount(points, timestamp) {
+  let low = 0;
+  let high = points.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (points[middle].time <= timestamp) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function drawExportStar(context, x, y, radius) {
+  context.beginPath();
+  for (let index = 0; index < 20; index++) {
+    const angle = -Math.PI / 2 + index * Math.PI / 10;
+    const distance = index % 2 === 0 ? radius : radius * .42;
+    const px = x + Math.cos(angle) * distance;
+    const py = y + Math.sin(angle) * distance;
+    if (index === 0) context.moveTo(px, py); else context.lineTo(px, py);
+  }
+  context.closePath();
+  context.fill();
+  context.stroke();
+}
+
+function renderExportFrame(canvas, baseMap, data, timestamp, headerHeight) {
+  const context = canvas.getContext('2d');
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  if (headerHeight) {
+    context.fillStyle = '#17202a';
+    context.fillRect(0, 0, canvas.width, headerHeight);
+    context.fillStyle = '#fff';
+    context.font = `bold ${Math.round(canvas.width / 58)}px Arial`;
+    context.textAlign = 'right';
+    context.fillText(data.exercise.name, canvas.width - 24, headerHeight * .58);
+    context.font = `${Math.round(canvas.width / 80)}px Arial`;
+    context.textAlign = 'left';
+    context.fillText(new Intl.DateTimeFormat('he-IL', {dateStyle:'short', timeStyle:'medium'}).format(timestamp), 24, headerHeight * .58);
+  }
+  context.drawImage(baseMap.background, 0, headerHeight);
+  for (const track of data.tracks) {
+    const count = exportVisibleCount(track.points, timestamp);
+    if (!count) continue;
+    const start = data.config.trail_enabled ? Math.max(0, count - data.config.trail_length) : 0;
+    const visible = track.points.slice(start, count);
+    context.strokeStyle = track.color;
+    context.lineWidth = Math.max(3, canvas.width / 320);
+    context.lineJoin = 'round';
+    context.lineCap = 'round';
+    context.beginPath();
+    visible.forEach((point, index) => {
+      const target = baseMap.project(point.latitude, point.longitude);
+      if (index === 0) context.moveTo(target.x, target.y); else context.lineTo(target.x, target.y);
+    });
+    context.stroke();
+    context.fillStyle = track.color;
+    context.strokeStyle = '#fff';
+    context.lineWidth = 1;
+    visible.forEach(point => {
+      const target = baseMap.project(point.latitude, point.longitude);
+      context.beginPath();
+      context.arc(target.x, target.y, Math.max(3.5, canvas.width / 360), 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
+    });
+    const latest = visible[visible.length - 1];
+    const previous = visible.length > 1 ? visible[visible.length - 2] : null;
+    if (previous) {
+      const end = baseMap.project(latest.latitude, latest.longitude);
+      const before = baseMap.project(previous.latitude, previous.longitude);
+      const angle = Math.atan2(end.y - before.y, end.x - before.x) + Math.PI / 2;
+      const size = Math.max(10, canvas.width / 80);
+      context.save();
+      context.translate(end.x, end.y);
+      context.rotate(angle);
+      context.fillStyle = track.color;
+      context.strokeStyle = '#fff';
+      context.lineWidth = 2;
+      context.beginPath();
+      context.moveTo(0, -size);
+      context.lineTo(size * .72, size);
+      context.lineTo(0, size * .55);
+      context.lineTo(-size * .72, size);
+      context.closePath();
+      context.fill();
+      context.stroke();
+      context.restore();
+      if (data.config.show_participant_names) {
+        context.font = `bold ${Math.max(13, canvas.width / 75)}px Arial`;
+        context.textAlign = 'center';
+        const padding = 7;
+        const textWidth = context.measureText(track.displayName).width;
+        context.fillStyle = '#fff';
+        context.strokeStyle = '#cbd5e1';
+        context.lineWidth = 1;
+        context.fillRect(end.x - textWidth / 2 - padding, end.y - size - 32, textWidth + padding * 2, 25);
+        context.strokeRect(end.x - textWidth / 2 - padding, end.y - size - 32, textWidth + padding * 2, 25);
+        context.fillStyle = '#17202a';
+        context.fillText(track.displayName, end.x, end.y - size - 14);
+      }
+    }
+  }
+  for (const item of data.events) {
+    if (item.time > timestamp) continue;
+    const age = (timestamp - item.time) / 1000;
+    const target = baseMap.project(item.latitude, item.longitude);
+    if (age >= 5 || Math.floor(age * 4) % 2 === 0) {
+      context.fillStyle = '#dc2626';
+      context.strokeStyle = '#fff';
+      context.lineWidth = 2;
+      drawExportStar(context, target.x, target.y, Math.max(10, canvas.width / 80));
+    }
+    if (age < 5) {
+      context.font = `bold ${Math.max(13, canvas.width / 80)}px Arial`;
+      context.textAlign = 'center';
+      const textWidth = context.measureText(item.description).width;
+      context.fillStyle = '#fff';
+      context.fillRect(target.x - textWidth / 2 - 7, target.y - 45, textWidth + 14, 25);
+      context.fillStyle = '#991b1b';
+      context.fillText(item.description, target.x, target.y - 27);
+    }
+  }
+  context.font = `${Math.max(11, canvas.width / 105)}px Arial`;
+  context.textAlign = 'left';
+  context.fillStyle = '#111827';
+  const attribution = data.config.map_style === 'satellite'
+    ? 'Esri'
+    : data.config.map_style === 'hybrid'
+      ? 'Esri | © OpenStreetMap contributors'
+      : '© OpenStreetMap contributors';
+  context.fillText(attribution, 8, canvas.height - 8);
+}
+
+async function createLocalVideo(data) {
+  if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
+    throw new Error('הדפדפן אינו תומך ביצירת וידאו. יש להשתמש ב-Chrome או Edge מעודכן.');
+  }
+  const canvas = document.getElementById('exportCanvas');
+  [canvas.width, canvas.height] = data.config.quality === '1080p' ? [1920, 1080] : [1280, 720];
+  canvas.hidden = false;
+  const headerHeight = data.config.show_header ? Math.round(canvas.height * .095) : 0;
+  const statusText = document.getElementById('exportVideoStatusText');
+  const progress = document.getElementById('exportVideoProgress');
+  statusText.textContent = 'טוען את המפה…';
+  const baseMap = await prepareExportMap(data, canvas.width, canvas.height, headerHeight);
+  data.tracks.forEach(track => track.points.forEach(point => { point.time = Date.parse(point.timestamp); }));
+  data.events.forEach(item => { item.time = Date.parse(item.timestamp); });
+  const timeline = [
+    ...data.tracks.flatMap(track => track.points.map(point => point.time)),
+    ...data.events.map(item => item.time)
+  ].sort((first, second) => first - second);
+  if (!timeline.length) throw new Error('אין נתונים ליצירת הווידאו.');
+  const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  const mimeType = mimeTypes.find(value => MediaRecorder.isTypeSupported(value));
+  if (!mimeType) throw new Error('הדפדפן אינו תומך בקידוד וידאו WebM.');
+  renderExportFrame(canvas, baseMap, data, timeline[0], headerHeight);
+  const chunks = [];
+  const recorder = new MediaRecorder(canvas.captureStream(25), {
+    mimeType,
+    videoBitsPerSecond:data.config.quality === '1080p' ? 8_000_000 : 5_000_000
+  });
+  recorder.ondataavailable = item => item.data.size && chunks.push(item.data);
+  const completed = new Promise((resolve, reject) => {
+    recorder.onstop = () => resolve(new Blob(chunks, {type:mimeType}));
+    recorder.onerror = event => reject(event.error || new Error('הקלטת הווידאו נכשלה.'));
+  });
+  recorder.start(1000);
+  statusText.textContent = 'יוצר וידאו במחשב… אין לסגור את הלשונית.';
+  const startedAt = performance.now();
+  const playbackSeconds = Math.max(0, (timeline.length - 1) / data.config.points_per_second);
+  await new Promise(resolve => {
+    const frame = now => {
+      const elapsed = (now - startedAt) / 1000;
+      const index = Math.min(timeline.length - 1, Math.floor(elapsed * data.config.points_per_second));
+      renderExportFrame(canvas, baseMap, data, timeline[index], headerHeight);
+      progress.value = Math.min(99, Math.round(elapsed / Math.max(.1, playbackSeconds + 1.25) * 100));
+      if (elapsed < playbackSeconds + 1.25) requestAnimationFrame(frame);
+      else resolve();
+    };
+    requestAnimationFrame(frame);
+  });
+  recorder.stop();
+  return completed;
 }
 
 async function submitVideoExport(event) {
   event.preventDefault();
   const errorRoot = document.getElementById('exportVideoError');
   const button = document.getElementById('createVideoExportButton');
+  const closeButton = document.getElementById('cancelVideoExportButton');
+  const statusRoot = document.getElementById('exportVideoStatus');
+  const progress = document.getElementById('exportVideoProgress');
   errorRoot.textContent = '';
   const participantIds = [...document.querySelectorAll('.export-participant-checkbox:checked')]
     .map(checkbox => checkbox.value);
@@ -1500,29 +1785,44 @@ async function submitVideoExport(event) {
   const endValue = document.getElementById('exportEndTime').value;
   try {
     button.disabled = true;
-    const job = await api(`/exercises/${currentExercise}/exports`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        participant_ids:participantIds,
-        map_style:document.getElementById('exportMapStyle').value,
-        show_events:document.getElementById('exportEventsEnabled').checked,
-        trail_enabled:document.getElementById('exportTrailEnabled').checked,
-        trail_length:Number(document.getElementById('exportTrailLength').value),
-        show_participant_names:document.getElementById('exportNamesEnabled').checked,
-        points_per_second:Number(document.getElementById('exportPlaybackRate').value),
-        quality:document.getElementById('exportQuality').value,
-        start_time:startValue ? new Date(startValue).toISOString() : null,
-        end_time:endValue ? new Date(endValue).toISOString() : null,
-        show_header:document.getElementById('exportHeaderEnabled').checked
-      })
+    closeButton.disabled = true;
+    statusRoot.hidden = false;
+    progress.value = 0;
+    const payload = {
+      participant_ids:participantIds,
+      map_style:document.getElementById('exportMapStyle').value,
+      show_events:document.getElementById('exportEventsEnabled').checked,
+      trail_enabled:document.getElementById('exportTrailEnabled').checked,
+      trail_length:Number(document.getElementById('exportTrailLength').value),
+      show_participant_names:document.getElementById('exportNamesEnabled').checked,
+      points_per_second:Number(document.getElementById('exportPlaybackRate').value),
+      quality:document.getElementById('exportQuality').value,
+      start_time:startValue ? new Date(startValue).toISOString() : null,
+      end_time:endValue ? new Date(endValue).toISOString() : null,
+      show_header:document.getElementById('exportHeaderEnabled').checked
+    };
+    document.getElementById('exportVideoStatusText').textContent = 'טוען את נתוני התרגיל…';
+    const data = await api(`/exercises/${currentExercise}/export-data`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
     });
-    updateVideoExportStatus(job);
-    if (videoExportPollTimer !== null) clearInterval(videoExportPollTimer);
-    videoExportPollTimer = setInterval(pollVideoExport, 10000);
+    const blob = await createLocalVideo(data);
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const safeName = data.exercise.name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'exercise';
+    link.href = blobUrl;
+    link.download = `ReTrace-${safeName}.webm`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    progress.value = 100;
+    document.getElementById('exportVideoStatusText').textContent = 'הווידאו נוצר והורד למחשב.';
   } catch (error) {
     errorRoot.textContent = `יצירת הייצוא נכשלה: ${error.message}`;
+    document.getElementById('exportVideoStatusText').textContent = 'יצירת הווידאו נכשלה.';
+  } finally {
     button.disabled = false;
+    closeButton.disabled = false;
   }
 }
 

@@ -51,12 +51,121 @@ def _utc_timestamp(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def _build_render_data(db: Session, exercise: Exercise, config: dict) -> dict:
+    participant_ids = [uuid.UUID(str(value)) for value in config["participant_ids"]]
+    participants = db.scalars(
+        select(Participant)
+        .where(Participant.exercise_id == exercise.id, Participant.id.in_(participant_ids))
+        .order_by(Participant.display_name)
+    ).all()
+    start_time = datetime.fromisoformat(config["start_time"]) if config.get("start_time") else None
+    end_time = datetime.fromisoformat(config["end_time"]) if config.get("end_time") else None
+
+    tracks = []
+    for index, participant in enumerate(participants):
+        query = select(
+            LocationPoint.captured_at,
+            ST_AsGeoJSON(LocationPoint.location).label("geojson"),
+        ).where(
+            LocationPoint.exercise_id == exercise.id,
+            LocationPoint.participant_id == participant.id,
+        )
+        if start_time:
+            query = query.where(LocationPoint.captured_at >= start_time)
+        if end_time:
+            query = query.where(LocationPoint.captured_at <= end_time)
+        rows = db.execute(query.order_by(LocationPoint.captured_at)).all()
+        points = []
+        for row in rows:
+            longitude, latitude = json.loads(row.geojson)["coordinates"][:2]
+            points.append({"timestamp": row.captured_at.isoformat(), "latitude": latitude, "longitude": longitude})
+        if points:
+            tracks.append(
+                {
+                    "participantId": str(participant.id),
+                    "displayName": participant.display_name,
+                    "color": TRACK_COLORS[index % len(TRACK_COLORS)],
+                    "points": points,
+                }
+            )
+
+    events = []
+    if config.get("show_events"):
+        query = select(
+            ExerciseEvent.id,
+            ExerciseEvent.occurred_at,
+            ExerciseEvent.reporter_name,
+            ExerciseEvent.reporter_role,
+            ExerciseEvent.description,
+            ST_AsGeoJSON(ExerciseEvent.location).label("geojson"),
+        ).where(ExerciseEvent.exercise_id == exercise.id)
+        if start_time:
+            query = query.where(ExerciseEvent.occurred_at >= start_time)
+        if end_time:
+            query = query.where(ExerciseEvent.occurred_at <= end_time)
+        for row in db.execute(query.order_by(ExerciseEvent.occurred_at)).all():
+            longitude, latitude = json.loads(row.geojson)["coordinates"][:2]
+            events.append(
+                {
+                    "id": str(row.id),
+                    "timestamp": row.occurred_at.isoformat(),
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "reporterName": row.reporter_name,
+                    "reporterRole": row.reporter_role,
+                    "description": row.description,
+                }
+            )
+    return {
+        "exercise": {"id": str(exercise.id), "name": exercise.name},
+        "config": config,
+        "tracks": tracks,
+        "events": events,
+    }
+
+
+@router.post("/exercises/{exercise_id}/export-data")
+def browser_video_export_data(
+    exercise_id: uuid.UUID,
+    payload: VideoExportCreate,
+    _: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exercise = db.get(Exercise, exercise_id)
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    participant_ids = list(dict.fromkeys(payload.participant_ids))
+    participant_count = db.scalar(
+        select(func.count(Participant.id)).where(
+            Participant.exercise_id == exercise_id,
+            Participant.id.in_(participant_ids),
+        )
+    ) or 0
+    if participant_count != len(participant_ids):
+        raise HTTPException(422, "One or more participants do not belong to this exercise")
+    config = payload.model_dump(mode="json")
+    config["participant_ids"] = [str(value) for value in participant_ids]
+    return _build_render_data(db, exercise, config)
+
+
 @router.post("/exercises/{exercise_id}/exports", status_code=status.HTTP_202_ACCEPTED)
 def create_video_export(
     exercise_id: uuid.UUID,
     payload: VideoExportCreate,
     current_user: AppUser = Depends(get_current_user),
     db: Session = Depends(get_db),
+):
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Server-side video export is disabled; refresh the page to use local browser export",
+    )
+
+
+def _legacy_create_video_export(
+    exercise_id: uuid.UUID,
+    payload: VideoExportCreate,
+    current_user: AppUser,
+    db: Session,
 ):
     exercise = db.get(Exercise, exercise_id)
     if not exercise:
@@ -182,75 +291,4 @@ def video_export_render_data(
     if not exercise:
         raise HTTPException(404, "Exercise not found")
 
-    config = job.config
-    participant_ids = [uuid.UUID(value) for value in config["participant_ids"]]
-    participants = db.scalars(
-        select(Participant)
-        .where(Participant.exercise_id == exercise.id, Participant.id.in_(participant_ids))
-        .order_by(Participant.display_name)
-    ).all()
-    start_time = datetime.fromisoformat(config["start_time"]) if config.get("start_time") else None
-    end_time = datetime.fromisoformat(config["end_time"]) if config.get("end_time") else None
-
-    tracks = []
-    for index, participant in enumerate(participants):
-        query = select(
-            LocationPoint.captured_at,
-            ST_AsGeoJSON(LocationPoint.location).label("geojson"),
-        ).where(
-            LocationPoint.exercise_id == exercise.id,
-            LocationPoint.participant_id == participant.id,
-        )
-        if start_time:
-            query = query.where(LocationPoint.captured_at >= start_time)
-        if end_time:
-            query = query.where(LocationPoint.captured_at <= end_time)
-        rows = db.execute(query.order_by(LocationPoint.captured_at)).all()
-        points = []
-        for row in rows:
-            longitude, latitude = json.loads(row.geojson)["coordinates"][:2]
-            points.append({"timestamp": row.captured_at.isoformat(), "latitude": latitude, "longitude": longitude})
-        if points:
-            tracks.append(
-                {
-                    "participantId": str(participant.id),
-                    "displayName": participant.display_name,
-                    "color": TRACK_COLORS[index % len(TRACK_COLORS)],
-                    "points": points,
-                }
-            )
-
-    events = []
-    if config.get("show_events"):
-        query = select(
-            ExerciseEvent.id,
-            ExerciseEvent.occurred_at,
-            ExerciseEvent.reporter_name,
-            ExerciseEvent.reporter_role,
-            ExerciseEvent.description,
-            ST_AsGeoJSON(ExerciseEvent.location).label("geojson"),
-        ).where(ExerciseEvent.exercise_id == exercise.id)
-        if start_time:
-            query = query.where(ExerciseEvent.occurred_at >= start_time)
-        if end_time:
-            query = query.where(ExerciseEvent.occurred_at <= end_time)
-        for row in db.execute(query.order_by(ExerciseEvent.occurred_at)).all():
-            longitude, latitude = json.loads(row.geojson)["coordinates"][:2]
-            events.append(
-                {
-                    "id": str(row.id),
-                    "timestamp": row.occurred_at.isoformat(),
-                    "latitude": latitude,
-                    "longitude": longitude,
-                    "reporterName": row.reporter_name,
-                    "reporterRole": row.reporter_role,
-                    "description": row.description,
-                }
-            )
-
-    return {
-        "exercise": {"id": str(exercise.id), "name": exercise.name},
-        "config": config,
-        "tracks": tracks,
-        "events": events,
-    }
+    return _build_render_data(db, exercise, job.config)
