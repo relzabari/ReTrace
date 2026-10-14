@@ -39,7 +39,8 @@ class TrackingService {
   final AuthSession session;
   final String exerciseId;
   final String deviceSessionId;
-  final LocalLocationStore _store = LocalLocationStore();
+  late final LocalLocationStore _store = LocalLocationStore(
+    userId: session.user.id, deviceSessionId: deviceSessionId);
   final StreamController<TrackingSnapshot> _status =
       StreamController.broadcast();
   StreamSubscription<Position>? _subscription;

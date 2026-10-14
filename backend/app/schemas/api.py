@@ -58,6 +58,11 @@ class DeviceSessionCreate(BaseModel):
     clock_offset_ms: int = 0
 
 
+class ExerciseAccessGrant(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    participant_id: uuid.UUID | None = None
+
+
 class LocationInput(BaseModel):
     sequence: int = Field(ge=0)
     captured_at: datetime

@@ -7,10 +7,36 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app.core.access import (
+    exercise_access,
+    exercise_scope,
+    participant_access,
+    participant_scope,
+    session_access,
+)
 from app.core.auth import get_current_user, require_admin, require_manager
 from app.db.session import get_db
-from app.models.models import AppUser, DeviceSession, Exercise, ExerciseEvent, ExerciseStatus, LocationPoint, Participant, UserRole
-from app.schemas.api import DeviceSessionCreate, EventCreate, ExerciseCreate, ExerciseUpdate, LocationBatch, ParticipantCreate, WebEventCreate
+from app.models.models import (
+    AppUser,
+    DeviceSession,
+    Exercise,
+    ExerciseMember,
+    ExerciseEvent,
+    ExerciseStatus,
+    LocationPoint,
+    Participant,
+    UserRole,
+)
+from app.schemas.api import (
+    DeviceSessionCreate,
+    ExerciseAccessGrant,
+    EventCreate,
+    ExerciseCreate,
+    ExerciseUpdate,
+    LocationBatch,
+    ParticipantCreate,
+    WebEventCreate,
+)
 
 router = APIRouter(prefix="/api/v1")
 PARTICIPANT_ROLES = {"רבשץ", "כיתת כוננות", "חמל", "מנהל תרגיל"}
@@ -28,7 +54,9 @@ def maybe_complete_exercise(db: Session, exercise: Exercise) -> bool:
         )
     )
     closing_started_at = exercise.closing_started_at or datetime.now(timezone.utc)
-    grace_expired = datetime.now(timezone.utc) >= closing_started_at + CLOSING_GRACE_PERIOD
+    grace_expired = (
+        datetime.now(timezone.utc) >= closing_started_at + CLOSING_GRACE_PERIOD
+    )
     if unfinished_sessions == 0 or grace_expired:
         exercise.status = ExerciseStatus.COMPLETED
         return True
@@ -57,9 +85,15 @@ def health() -> dict[str, str]:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_manager)],
 )
-def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db)):
+def create_exercise(
+    payload: ExerciseCreate,
+    current_user: AppUser = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
     exercise = Exercise(name=payload.name, timezone=payload.timezone)
     db.add(exercise)
+    db.flush()
+    db.add(ExerciseMember(exercise_id=exercise.id, user_id=current_user.id))
     db.commit()
     db.refresh(exercise)
     return {
@@ -71,8 +105,14 @@ def create_exercise(payload: ExerciseCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/exercises", dependencies=[Depends(get_current_user)])
-def list_exercises(db: Session = Depends(get_db)):
-    exercises = db.scalars(select(Exercise).order_by(Exercise.created_at.desc())).all()
+def list_exercises(
+    current_user: AppUser = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    exercises = db.scalars(
+        select(Exercise)
+        .where(exercise_scope(current_user))
+        .order_by(Exercise.created_at.desc())
+    ).all()
     statuses_changed = False
     for exercise in exercises:
         statuses_changed = maybe_complete_exercise(db, exercise) or statuses_changed
@@ -94,10 +134,12 @@ def list_exercises(db: Session = Depends(get_db)):
 
 
 @router.get("/exercises/{exercise_id}", dependencies=[Depends(get_current_user)])
-def get_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+def get_exercise(
+    exercise_id: uuid.UUID,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user)
     if maybe_complete_exercise(db, exercise):
         db.commit()
     return {
@@ -114,11 +156,10 @@ def get_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
 def update_exercise(
     exercise_id: uuid.UUID,
     payload: ExerciseUpdate,
+    current_user: AppUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = exercise_access(db, exercise_id, current_user)
     exercise.name = payload.name.strip()
     db.commit()
     db.refresh(exercise)
@@ -130,10 +171,12 @@ def update_exercise(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_admin)],
 )
-def delete_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+def delete_exercise(
+    exercise_id: uuid.UUID,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    exercise = exercise_access(db, exercise_id, current_user)
     db.delete(exercise)
     db.commit()
 
@@ -149,18 +192,23 @@ def add_participant(
     current_user: AppUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = exercise_access(db, exercise_id, current_user)
     if exercise.status in (ExerciseStatus.ENDING, ExerciseStatus.COMPLETED):
         raise HTTPException(409, "Exercise is closed")
     if exercise.status == ExerciseStatus.DRAFT and current_user.role == UserRole.USER:
         raise HTTPException(403, "A user can only join an active exercise")
     if payload.role not in PARTICIPANT_ROLES:
         raise HTTPException(422, "Unknown participant role")
-    if current_user.role == UserRole.USER and payload.role not in USER_PARTICIPANT_ROLES:
-        raise HTTPException(403, "This participant role is not allowed for a USER account")
-    participant = Participant(exercise_id=exercise_id, **payload.model_dump())
+    if (
+        current_user.role == UserRole.USER
+        and payload.role not in USER_PARTICIPANT_ROLES
+    ):
+        raise HTTPException(
+            403, "This participant role is not allowed for a USER account"
+        )
+    participant = Participant(
+        exercise_id=exercise_id, user_id=current_user.id, **payload.model_dump()
+    )
     db.add(participant)
     db.commit()
     db.refresh(participant)
@@ -174,18 +222,25 @@ def add_participant(
     }
 
 
-@router.get("/exercises/{exercise_id}/participants", dependencies=[Depends(get_current_user)])
-def list_participants(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+@router.get(
+    "/exercises/{exercise_id}/participants", dependencies=[Depends(get_current_user)]
+)
+def list_participants(
+    exercise_id: uuid.UUID,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user)
     participants = db.scalars(
-        select(Participant).where(Participant.exercise_id == exercise_id).order_by(Participant.display_name)
+        select(Participant)
+        .where(Participant.exercise_id == exercise_id, participant_scope(current_user))
+        .order_by(Participant.display_name)
     ).all()
     return {
         "items": [
             {
                 "id": p.id,
+                "userId": p.user_id if current_user.role != UserRole.USER else None,
                 "displayName": p.display_name,
                 "callsign": p.callsign,
                 "role": p.role,
@@ -207,16 +262,14 @@ def create_device_session(
     current_user: AppUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = exercise_access(db, exercise_id, current_user)
     if exercise.status in (ExerciseStatus.ENDING, ExerciseStatus.COMPLETED):
         raise HTTPException(409, "Exercise is closed")
     if exercise.status == ExerciseStatus.DRAFT and current_user.role == UserRole.USER:
         raise HTTPException(403, "A user can only join an active exercise")
-    participant = db.get(Participant, payload.participant_id)
-    if not participant or participant.exercise_id != exercise_id:
-        raise HTTPException(404, "Participant not found in exercise")
+    participant = participant_access(
+        db, exercise_id, payload.participant_id, current_user, write=True
+    )
     session = DeviceSession(
         exercise_id=exercise_id,
         participant_id=payload.participant_id,
@@ -234,23 +287,31 @@ def create_device_session(
 
 
 @router.post("/exercises/{exercise_id}/start", dependencies=[Depends(require_manager)])
-def start_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+def start_exercise(
+    exercise_id: uuid.UUID,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user)
     if exercise.status != ExerciseStatus.DRAFT:
         raise HTTPException(409, "Only a draft exercise can be started")
     exercise.status = ExerciseStatus.ACTIVE
     exercise.actual_start = datetime.now(timezone.utc)
     db.commit()
-    return {"exerciseId": exercise.id, "status": exercise.status, "actualStart": exercise.actual_start}
+    return {
+        "exerciseId": exercise.id,
+        "status": exercise.status,
+        "actualStart": exercise.actual_start,
+    }
 
 
 @router.post("/exercises/{exercise_id}/close", dependencies=[Depends(require_manager)])
-def close_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+def close_exercise(
+    exercise_id: uuid.UUID,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user)
     if exercise.status != ExerciseStatus.ACTIVE:
         raise HTTPException(409, "Only an active exercise can be closed")
     exercise.status = ExerciseStatus.ENDING
@@ -267,14 +328,11 @@ def close_exercise(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
 def finish_device_session(
     exercise_id: uuid.UUID,
     device_session_id: uuid.UUID,
+    current_user: AppUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
-    device_session = db.get(DeviceSession, device_session_id)
-    if not device_session or device_session.exercise_id != exercise_id:
-        raise HTTPException(404, "Device session not found in exercise")
+    exercise = exercise_access(db, exercise_id, current_user)
+    device_session = session_access(db, exercise_id, device_session_id, current_user)
     if exercise.status not in (ExerciseStatus.ENDING, ExerciseStatus.COMPLETED):
         raise HTTPException(409, "Exercise is not closing")
     if device_session.ended_at is None:
@@ -284,19 +342,24 @@ def finish_device_session(
     return {"exerciseId": exercise.id, "status": exercise.status}
 
 
-@router.post("/exercises/{exercise_id}/locations/batch", dependencies=[Depends(get_current_user)])
-def upload_locations(exercise_id: uuid.UUID, payload: LocationBatch, db: Session = Depends(get_db)):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+@router.post(
+    "/exercises/{exercise_id}/locations/batch", dependencies=[Depends(get_current_user)]
+)
+def upload_locations(
+    exercise_id: uuid.UUID,
+    payload: LocationBatch,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user)
     if maybe_complete_exercise(db, exercise):
         db.commit()
     if exercise.status not in (ExerciseStatus.ACTIVE, ExerciseStatus.ENDING):
         raise HTTPException(409, "Exercise is not active")
 
-    device_session = db.get(DeviceSession, payload.device_session_id)
-    if not device_session or device_session.exercise_id != exercise_id:
-        raise HTTPException(404, "Device session not found in exercise")
+    device_session = session_access(
+        db, exercise_id, payload.device_session_id, current_user
+    )
 
     rows = []
     for p in payload.points:
@@ -327,7 +390,9 @@ def upload_locations(exercise_id: uuid.UUID, payload: LocationBatch, db: Session
     return {
         "accepted": len(accepted_sequences),
         "duplicates": len(payload.points) - len(accepted_sequences),
-        "highestAcceptedSequence": max((p.sequence for p in payload.points), default=None),
+        "highestAcceptedSequence": max(
+            (p.sequence for p in payload.points), default=None
+        ),
         "serverTime": datetime.now(timezone.utc),
     }
 
@@ -337,17 +402,20 @@ def upload_locations(exercise_id: uuid.UUID, payload: LocationBatch, db: Session
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(get_current_user)],
 )
-def create_event(exercise_id: uuid.UUID, payload: EventCreate, db: Session = Depends(get_db)):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+def create_event(
+    exercise_id: uuid.UUID,
+    payload: EventCreate,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user)
     if exercise.status != ExerciseStatus.ACTIVE:
         raise HTTPException(409, "Exercise is not active")
     validate_event_time(payload.occurred_at, exercise.created_at)
 
-    device_session = db.get(DeviceSession, payload.device_session_id)
-    if not device_session or device_session.exercise_id != exercise_id:
-        raise HTTPException(404, "Device session not found in exercise")
+    device_session = session_access(
+        db, exercise_id, payload.device_session_id, current_user
+    )
     participant = db.get(Participant, device_session.participant_id)
     if not participant:
         raise HTTPException(404, "Participant not found in exercise")
@@ -390,9 +458,7 @@ def create_web_event(
     description = payload.description.strip()
     if not description:
         raise HTTPException(422, "Event description cannot be blank")
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = exercise_access(db, exercise_id, current_user)
     if exercise.status != ExerciseStatus.ACTIVE:
         raise HTTPException(409, "Exercise is not active")
     validate_event_time(payload.occurred_at, exercise.created_at)
@@ -423,10 +489,12 @@ def create_web_event(
 
 
 @router.get("/exercises/{exercise_id}/events", dependencies=[Depends(get_current_user)])
-def list_events(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+def list_events(
+    exercise_id: uuid.UUID,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user)
 
     rows = db.execute(
         select(
@@ -438,7 +506,19 @@ def list_events(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
             ExerciseEvent.description,
             ST_AsGeoJSON(ExerciseEvent.location).label("geojson"),
         )
-        .where(ExerciseEvent.exercise_id == exercise_id)
+        .where(
+            ExerciseEvent.exercise_id == exercise_id,
+            (
+                ExerciseEvent.participant_id.in_(
+                    select(Participant.id).where(
+                        Participant.exercise_id == exercise_id,
+                        participant_scope(current_user),
+                    )
+                )
+                if current_user.role == UserRole.USER
+                else True
+            ),
+        )
         .order_by(ExerciseEvent.occurred_at)
     ).all()
 
@@ -467,10 +547,13 @@ def list_events(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
     "/exercises/{exercise_id}/tracks/{participant_id}",
     dependencies=[Depends(get_current_user)],
 )
-def get_track(exercise_id: uuid.UUID, participant_id: uuid.UUID, db: Session = Depends(get_db)):
-    participant = db.get(Participant, participant_id)
-    if not participant or participant.exercise_id != exercise_id:
-        raise HTTPException(404, "Participant not found in exercise")
+def get_track(
+    exercise_id: uuid.UUID,
+    participant_id: uuid.UUID,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    participant = participant_access(db, exercise_id, participant_id, current_user)
 
     rows = db.execute(
         select(
@@ -481,7 +564,10 @@ def get_track(exercise_id: uuid.UUID, participant_id: uuid.UUID, db: Session = D
             LocationPoint.heading,
             ST_AsGeoJSON(LocationPoint.location).label("geojson"),
         )
-        .where(LocationPoint.exercise_id == exercise_id, LocationPoint.participant_id == participant_id)
+        .where(
+            LocationPoint.exercise_id == exercise_id,
+            LocationPoint.participant_id == participant_id,
+        )
         .order_by(LocationPoint.captured_at)
     ).all()
 
@@ -511,22 +597,36 @@ def get_track(exercise_id: uuid.UUID, participant_id: uuid.UUID, db: Session = D
     }
 
 
-@router.get("/exercises/{exercise_id}/map-bootstrap", dependencies=[Depends(get_current_user)])
-def map_bootstrap(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+@router.get(
+    "/exercises/{exercise_id}/map-bootstrap", dependencies=[Depends(get_current_user)]
+)
+def map_bootstrap(
+    exercise_id: uuid.UUID,
+    current_user: AppUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user)
     if maybe_complete_exercise(db, exercise):
         db.commit()
 
     participants = db.scalars(
-        select(Participant).where(Participant.exercise_id == exercise_id).order_by(Participant.display_name)
+        select(Participant)
+        .where(Participant.exercise_id == exercise_id, participant_scope(current_user))
+        .order_by(Participant.display_name)
     ).all()
 
     counts = dict(
         db.execute(
             select(LocationPoint.participant_id, func.count(LocationPoint.id))
-            .where(LocationPoint.exercise_id == exercise_id)
+            .where(
+                LocationPoint.exercise_id == exercise_id,
+                LocationPoint.participant_id.in_(
+                    select(Participant.id).where(
+                        Participant.exercise_id == exercise_id,
+                        participant_scope(current_user),
+                    )
+                ),
+            )
             .group_by(LocationPoint.participant_id)
         ).all()
     )
@@ -542,6 +642,7 @@ def map_bootstrap(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
         "participants": [
             {
                 "id": p.id,
+                "userId": p.user_id if current_user.role != UserRole.USER else None,
                 "displayName": p.display_name,
                 "callsign": p.callsign,
                 "role": p.role,
@@ -551,3 +652,71 @@ def map_bootstrap(exercise_id: uuid.UUID, db: Session = Depends(get_db)):
             for p in participants
         ],
     }
+
+
+@router.get("/exercises/{exercise_id}/access")
+def list_exercise_access(
+    exercise_id: uuid.UUID,
+    current_user: AppUser = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    exercise_access(db, exercise_id, current_user, manage=True)
+    users = db.scalars(
+        select(AppUser)
+        .join(ExerciseMember, ExerciseMember.user_id == AppUser.id)
+        .where(ExerciseMember.exercise_id == exercise_id)
+        .order_by(AppUser.email)
+    ).all()
+    return {
+        "items": [
+            {"id": user.id, "email": user.email, "role": user.role} for user in users
+        ]
+    }
+
+
+@router.post("/exercises/{exercise_id}/access")
+def grant_exercise_access(
+    exercise_id: uuid.UUID,
+    payload: ExerciseAccessGrant,
+    current_user: AppUser = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    exercise_access(db, exercise_id, current_user, manage=True)
+    target = db.scalar(
+        select(AppUser).where(AppUser.email == payload.email.strip().lower())
+    )
+    if target is None or not target.is_active:
+        raise HTTPException(404, "Active user not found")
+    participant = None
+    if payload.participant_id is not None:
+        participant = db.scalar(
+            select(Participant)
+            .where(Participant.id == payload.participant_id)
+            .with_for_update()
+        )
+        if participant is None or participant.exercise_id != exercise_id:
+            raise HTTPException(404, "Participant not found in exercise")
+        if participant.user_id is not None and participant.user_id != target.id:
+            raise HTTPException(409, "Participant already belongs to another user")
+    if db.get(ExerciseMember, (exercise_id, target.id)) is None:
+        db.add(ExerciseMember(exercise_id=exercise_id, user_id=target.id))
+    if participant is not None:
+        participant.user_id = target.id
+    db.commit()
+    return {"userId": target.id, "email": target.email}
+
+
+@router.delete("/exercises/{exercise_id}/access/{user_id}", status_code=204)
+def revoke_exercise_access(
+    exercise_id: uuid.UUID,
+    user_id: uuid.UUID,
+    current_user: AppUser = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    exercise_access(db, exercise_id, current_user, manage=True)
+    if user_id == current_user.id:
+        raise HTTPException(409, "You cannot revoke your own exercise access")
+    member = db.get(ExerciseMember, (exercise_id, user_id))
+    if member is not None:
+        db.delete(member)
+        db.commit()
