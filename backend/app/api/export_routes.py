@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
+from app.core.access import exercise_access, participant_access
 from app.db.session import get_db
 from app.models.models import (
     AppUser,
@@ -20,6 +21,7 @@ from app.models.models import (
     Participant,
     VideoExportJob,
     VideoExportStatus,
+    UserRole,
 )
 from app.schemas.api import VideoExportCreate
 
@@ -51,7 +53,7 @@ def _utc_timestamp(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-def _build_render_data(db: Session, exercise: Exercise, config: dict) -> dict:
+def _build_render_data(db: Session, exercise: Exercise, config: dict, *, own_events_only: bool = False) -> dict:
     participant_ids = [uuid.UUID(str(value)) for value in config["participant_ids"]]
     participants = db.scalars(
         select(Participant)
@@ -99,6 +101,8 @@ def _build_render_data(db: Session, exercise: Exercise, config: dict) -> dict:
             ExerciseEvent.description,
             ST_AsGeoJSON(ExerciseEvent.location).label("geojson"),
         ).where(ExerciseEvent.exercise_id == exercise.id)
+        if own_events_only:
+            query = query.where(ExerciseEvent.participant_id.in_(participant_ids))
         if start_time:
             query = query.where(ExerciseEvent.occurred_at >= start_time)
         if end_time:
@@ -128,13 +132,13 @@ def _build_render_data(db: Session, exercise: Exercise, config: dict) -> dict:
 def browser_video_export_data(
     exercise_id: uuid.UUID,
     payload: VideoExportCreate,
-    _: AppUser = Depends(get_current_user),
+    current_user: AppUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = exercise_access(db, exercise_id, current_user)
     participant_ids = list(dict.fromkeys(payload.participant_ids))
+    for participant_id in participant_ids:
+        participant_access(db, exercise_id, participant_id, current_user)
     participant_count = db.scalar(
         select(func.count(Participant.id)).where(
             Participant.exercise_id == exercise_id,
@@ -145,7 +149,7 @@ def browser_video_export_data(
         raise HTTPException(422, "One or more participants do not belong to this exercise")
     config = payload.model_dump(mode="json")
     config["participant_ids"] = [str(value) for value in participant_ids]
-    return _build_render_data(db, exercise, config)
+    return _build_render_data(db, exercise, config, own_events_only=current_user.role == UserRole.USER)
 
 
 @router.post("/exercises/{exercise_id}/exports", status_code=status.HTTP_202_ACCEPTED)
@@ -167,9 +171,7 @@ def _legacy_create_video_export(
     current_user: AppUser,
     db: Session,
 ):
-    exercise = db.get(Exercise, exercise_id)
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = exercise_access(db, exercise_id, current_user)
 
     participant_ids = list(dict.fromkeys(payload.participant_ids))
     participants = db.scalars(
@@ -231,23 +233,23 @@ def _legacy_create_video_export(
 @router.get("/exports/{job_id}")
 def get_video_export(
     job_id: uuid.UUID,
-    _: AppUser = Depends(get_current_user),
+    current_user: AppUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     job = db.get(VideoExportJob, job_id)
     if not job:
         raise HTTPException(404, "Video export not found")
+    exercise_access(db, job.exercise_id, current_user, manage=True)
     return _job_payload(job)
 
 
 @router.get("/exercises/{exercise_id}/exports")
 def list_video_exports(
     exercise_id: uuid.UUID,
-    _: AppUser = Depends(get_current_user),
+    current_user: AppUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not db.get(Exercise, exercise_id):
-        raise HTTPException(404, "Exercise not found")
+    exercise_access(db, exercise_id, current_user, manage=True)
     jobs = db.scalars(
         select(VideoExportJob)
         .where(VideoExportJob.exercise_id == exercise_id)
@@ -260,12 +262,13 @@ def list_video_exports(
 @router.get("/exports/{job_id}/download")
 def download_video_export(
     job_id: uuid.UUID,
-    _: AppUser = Depends(get_current_user),
+    current_user: AppUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     job = db.get(VideoExportJob, job_id)
     if not job:
         raise HTTPException(404, "Video export not found")
+    exercise_access(db, job.exercise_id, current_user, manage=True)
     if job.status != VideoExportStatus.READY or not job.output_path:
         raise HTTPException(409, "Video export is not ready")
     if job.expires_at and job.expires_at <= datetime.now(timezone.utc):

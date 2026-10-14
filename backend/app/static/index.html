@@ -155,6 +155,17 @@
       <strong>מסלולים מוצגים</strong>
       <div id="trackInfo" class="muted">אין מסלולים מוצגים.</div>
     </div>
+    <div id="exerciseAccess" class="card" hidden>
+      <strong>גישה לתרגיל</strong>
+      <p class="muted">הוסף חשבון קיים לתרגיל. משתתף רגיל יראה רק את נתוניו; מנהל יראה את כל נתוני התרגיל. אפשר לשייך נתוני משתתף ישנים לחשבון לאחר אימות זהותו.</p>
+      <form id="exerciseAccessForm">
+        <input id="exerciseAccessEmail" type="email" required placeholder="כתובת המייל של החשבון" aria-label="כתובת המייל של החשבון" />
+        <select id="legacyParticipant" aria-label="שיוך נתוני משתתף ישנים"><option value="">ללא שיוך נתונים ישנים</option></select>
+        <button type="submit">הוסף גישה</button>
+      </form>
+      <div id="exerciseAccessError" class="auth-error" role="status"></div>
+      <div id="exerciseAccessList"></div>
+    </div>
     <div id="userManagement" class="card" hidden>
       <strong>ניהול משתמשים</strong>
       <div class="add-user-grid">
@@ -529,6 +540,15 @@ async function loadExercise(id) {
   currentExerciseStatus = data.exercise.status;
   currentExerciseCreatedAt = Date.parse(data.exercise.createdAt);
   exerciseParticipants = data.participants;
+  const canManageAccess = currentUser.role === 'ADMIN' || currentUser.role === 'MANAGER';
+  document.getElementById('exerciseAccess').hidden = !canManageAccess;
+  const legacySelect = document.getElementById('legacyParticipant');
+  legacySelect.replaceChildren(new Option('ללא שיוך נתונים ישנים', ''));
+  for (const participant of data.participants.filter(item => !item.userId)) {
+    legacySelect.append(new Option(participant.displayName, participant.id));
+  }
+  document.getElementById('exerciseAccessError').textContent = '';
+  if (canManageAccess) await loadExerciseAccess(id);
   document.getElementById('exerciseName').textContent = data.exercise.name;
   document.getElementById('exerciseStatus').textContent = `סטטוס: ${data.exercise.status}`;
   const root = document.getElementById('participants');
@@ -2022,6 +2042,7 @@ document.getElementById('deleteExerciseForm').onsubmit = async event => {
     document.getElementById('exerciseName').textContent = 'לא נבחר תרגיל';
     document.getElementById('exerciseStatus').textContent = '';
     document.getElementById('participants').innerHTML = '';
+    document.getElementById('exerciseAccess').hidden = true;
     document.getElementById('trackInfo').textContent = 'אין מסלולים מוצגים.';
     document.getElementById('eventAvailability').textContent = 'בחר תרגיל כדי לבדוק אם קיימים אירועים';
     document.getElementById('eventAvailability').classList.remove('has-events');
@@ -2033,6 +2054,64 @@ document.getElementById('deleteExerciseForm').onsubmit = async event => {
   } catch (error) {
     errorRoot.textContent = `מחיקת התרגיל נכשלה: ${error.message}`;
     confirmButton.disabled = false;
+  }
+};
+
+async function loadExerciseAccess(exerciseId) {
+  const data = await api(`/exercises/${exerciseId}/access`);
+  if (exerciseId !== currentExercise) return;
+  const root = document.getElementById('exerciseAccessList');
+  root.replaceChildren();
+  for (const member of data.items) {
+    const row = document.createElement('div');
+    const label = document.createElement('span');
+    label.textContent = `${member.email} · ${member.role} `;
+    row.append(label);
+    if (member.id !== currentUser.id) {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = 'הסר גישה';
+      remove.onclick = async () => {
+        remove.disabled = true;
+        try {
+          await api(`/exercises/${exerciseId}/access/${member.id}`, {method: 'DELETE'});
+          await loadExerciseAccess(exerciseId);
+        } catch (error) {
+          document.getElementById('exerciseAccessError').textContent = error.message;
+          remove.disabled = false;
+        }
+      };
+      row.append(remove);
+    }
+    root.append(row);
+  }
+}
+
+document.getElementById('exerciseAccessForm').onsubmit = async event => {
+  event.preventDefault();
+  if (!currentExercise) return;
+  const exerciseId = currentExercise;
+  const button = event.target.querySelector('button');
+  button.disabled = true;
+  const errorRoot = document.getElementById('exerciseAccessError');
+  errorRoot.textContent = '';
+  try {
+    await api(`/exercises/${exerciseId}/access`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        email: document.getElementById('exerciseAccessEmail').value.trim(),
+        participant_id: document.getElementById('legacyParticipant').value || null
+      })
+    });
+    if (exerciseId === currentExercise) {
+      document.getElementById('exerciseAccessEmail').value = '';
+      await loadExercise(exerciseId);
+    }
+  } catch (error) {
+    errorRoot.textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 };
 

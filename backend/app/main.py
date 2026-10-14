@@ -16,6 +16,16 @@ app = FastAPI(title="Exercise Platform Prototype", version="0.2.0")
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+    # Add ownership to legacy participants. Never infer it from names or device IDs.
+    with engine.begin() as connection:
+        connection.execute(text("""
+            ALTER TABLE exercise_participants ADD COLUMN IF NOT EXISTS user_id UUID
+            REFERENCES app_users(id) ON DELETE SET NULL
+        """))
+        connection.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_exercise_participants_user_id
+            ON exercise_participants(user_id)
+        """))
     # Lightweight migration for installations created before participant roles
     # were introduced. New installations already receive this column via ORM.
     with engine.begin() as connection:
