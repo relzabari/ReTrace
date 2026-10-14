@@ -576,6 +576,16 @@ function normalizeEvents(items) {
     .sort((first, second) => first.timestamp - second.timestamp);
 }
 
+// Leaflet treats strings as HTML. Keep untrusted labels in text nodes.
+function textPopup(...lines) {
+  const root = document.createElement('div');
+  lines.forEach((line, index) => {
+    if (index > 0) root.append(document.createElement('br'));
+    root.append(document.createTextNode(String(line)));
+  });
+  return root;
+}
+
 function eventPopup(event) {
   const root = document.createElement('div');
   const title = document.createElement('strong');
@@ -742,7 +752,7 @@ async function toggleTrack(participant, checkbox, color) {
     color,
     fillColor: color,
     fillOpacity: 1
-  }).bindPopup(`תחילת המסלול — ${data.displayName}`);
+  }).bindPopup(textPopup(`תחילת המסלול — ${data.displayName}`));
   const currentMarker = L.circleMarker(timedPoints[0].latlng, {
     radius: 7,
     color,
@@ -980,7 +990,7 @@ function renderMapAtTime(timestamp) {
       }
       track.currentMarker
         .setLatLng(latest.latlng)
-        .bindPopup(`${track.data.displayName}<br>${formatTimelineTime(latest.timestamp)}`);
+        .bindPopup(textPopup(track.data.displayName, formatTimelineTime(latest.timestamp)));
       if (!map.hasLayer(track.currentMarker)) track.currentMarker.addTo(map);
       updateTrackArrow(track, nextStartIndex, nextCount);
     } else {
