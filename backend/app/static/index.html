@@ -138,6 +138,7 @@
   <button id="deleteExerciseButton" class="danger-button" type="button" hidden>מחק תרגיל</button>
   <span id="currentUserLabel"></span>
   <button id="logoutButton" type="button">יציאה</button>
+  <button id="logoutAllButton" type="button">יציאה מכל המכשירים</button>
 </header>
 <main class="protected">
   <aside>
@@ -400,6 +401,8 @@ const participantControls = new Map();
 let accessToken = localStorage.getItem('retraceAccessToken');
 let refreshToken = localStorage.getItem('retraceRefreshToken');
 let currentUser = null;
+let logoutInProgress = false;
+let authGeneration = 0;
 let eventLocationMap = null;
 let eventLocationMarker = null;
 let selectedEventLatLng = null;
@@ -415,6 +418,8 @@ function updateLiveActionButtons() {
 }
 
 async function refreshAccessToken() {
+  if (logoutInProgress) return false;
+  const generation = authGeneration;
   if (!refreshToken) return false;
   const response = await fetch('/api/v1/auth/refresh', {
     method: 'POST',
@@ -423,6 +428,7 @@ async function refreshAccessToken() {
   });
   if (!response.ok) return false;
   const data = await response.json();
+  if (logoutInProgress || generation !== authGeneration) return false;
   saveSession(data);
   return true;
 }
@@ -463,6 +469,7 @@ function saveSession(data) {
 }
 
 function clearSession() {
+  authGeneration++;
   accessToken = null;
   refreshToken = null;
   currentUser = null;
@@ -471,6 +478,9 @@ function clearSession() {
 }
 
 async function initializeAuth() {
+  const logoutWarning = sessionStorage.getItem('retraceLogoutWarning');
+  sessionStorage.removeItem('retraceLogoutWarning');
+  if (logoutWarning) document.getElementById('loginError').textContent = logoutWarning;
   if (accessToken) {
     let response = await authenticatedFetch('/api/v1/auth/me');
     if (response.ok) currentUser = await response.json();
@@ -2211,10 +2221,43 @@ document.getElementById('loginForm').onsubmit = async event => {
   }
 };
 
-document.getElementById('logoutButton').onclick = () => {
-  clearSession();
-  location.reload();
-};
+async function logout(scope = 'local') {
+  if (logoutInProgress) return;
+  if (scope === 'global' && !confirm('לצאת מהחשבון בכל המכשירים, כולל במכשיר הזה?')) return;
+  logoutInProgress = true;
+  authGeneration++; // An already-running refresh must never restore this session.
+  document.getElementById('logoutButton').disabled = true;
+  document.getElementById('logoutAllButton').disabled = true;
+  let token = accessToken;
+  const savedRefreshToken = refreshToken;
+  try {
+    const revoke = () => fetch(`/api/v1/auth/logout?scope=${scope}`, {
+      method: 'POST', headers: {Authorization: `Bearer ${token}`},
+      signal: AbortSignal.timeout(15000)
+    });
+    let response = await revoke();
+    if (response.status === 401 && savedRefreshToken) {
+      const refreshed = await fetch('/api/v1/auth/refresh', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({refresh_token: savedRefreshToken}),
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!refreshed.ok) throw new Error('Session could not be refreshed for logout');
+      token = (await refreshed.json()).accessToken;
+      response = await revoke();
+    }
+    if (response.status !== 204) throw new Error('Session revocation failed');
+  } catch (_) {
+    sessionStorage.setItem('retraceLogoutWarning',
+      'יצאת מהמכשיר הזה, אך לא ניתן לאשר שביטול הסשן בשרת הצליח. כדי להשלים את הביטול, התחבר שוב ובחר יציאה מכל המכשירים כשהחיבור זמין.');
+  } finally {
+    clearSession();
+    location.reload();
+  }
+}
+
+document.getElementById('logoutButton').onclick = () => logout('local');
+document.getElementById('logoutAllButton').onclick = () => logout('global');
 
 restorePlaybackRate();
 restoreParticipantNamesPreference();

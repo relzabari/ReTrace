@@ -55,9 +55,16 @@ class _AuthGateState extends State<AuthGate> {
     }
   }
 
-  Future<void> _logout() async {
-    await _session?.logout();
-    if (mounted) setState(() => _session = null);
+  Future<void> _logout(bool allDevices) async {
+    final revoked = await _session?.logout(allDevices: allDevices) ?? false;
+    if (!mounted) return;
+    setState(() => _session = null);
+    if (!revoked) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('יצאת מהמכשיר הזה, אך ביטול הסשן בשרת לא אושר. כשהחיבור זמין, התחבר שוב ובחר יציאה מכל המכשירים.'),
+        duration: Duration(seconds: 12),
+      ));
+    }
   }
 
   @override

@@ -1,11 +1,14 @@
 import uuid
 from urllib.parse import quote
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import (
+    bearer_scheme,
     get_current_user,
     require_admin,
     supabase_request,
@@ -67,6 +70,26 @@ def refresh_session(payload: RefreshRequest, db: Session = Depends(get_db)):
     if not profile.is_active:
         raise HTTPException(403, "User is disabled")
     return _session_payload(auth_payload, profile)
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    scope: Literal["local", "global"] = Query(default="local"),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    # Supabase validates this token and determines its owner. Never accept a user
+    # ID or use the service/admin key to sign out a caller-selected account.
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(401, "Authentication required")
+    response = supabase_request(
+        "POST", f"/logout?scope={scope}", access_token=credentials.credentials
+    )
+    if response.status_code in (401, 403):
+        raise HTTPException(401, "Invalid or expired session")
+    if response.status_code == 429:
+        raise HTTPException(429, "Too many logout requests")
+    if response.status_code != 204:
+        raise HTTPException(503, "Could not revoke session; try again")
 
 
 @router.post("/auth/password-reset/request")
