@@ -1,30 +1,47 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
-import 'package:exercise_tracker_prototype/main.dart';
+import 'package:exercise_tracker_prototype/features/about/about_page.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('About displays installed metadata rather than hardcoded version',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: AboutPage(
+        loadPackageInfo: () async => PackageInfo(
+          appName: 'ReTrace',
+          packageName: 'com.example.exercise_tracker_prototype',
+          version: '9.8.7',
+          buildNumber: '42',
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('גרסה'), findsOneWidget);
+    expect(find.text('9.8.7'), findsOneWidget);
+    expect(find.text('מספר בנייה'), findsOneWidget);
+    expect(find.text('42'), findsOneWidget);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  testWidgets('About handles metadata failure and allows retry', (tester) async {
+    var attempts = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: AboutPage(loadPackageInfo: () async {
+        attempts++;
+        if (attempts == 1) throw StateError('Platform unavailable');
+        return PackageInfo(
+          appName: 'ReTrace', packageName: 'retrace',
+          version: '1.2.3', buildNumber: '99',
+        );
+      }),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('לא ניתן לטעון את פרטי הגרסה.'), findsOneWidget);
+    await tester.tap(find.text('נסה שוב'));
+    await tester.pumpAndSettle();
+    expect(find.text('1.2.3'), findsOneWidget);
+    expect(find.text('99'), findsOneWidget);
   });
 }

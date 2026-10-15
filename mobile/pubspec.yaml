@@ -1,9 +1,10 @@
 name: exercise_tracker_prototype
 description: Offline-first GPS tracking prototype for exercise debriefing.
 publish_to: "none"
-version: 0.2.0+5
+version: 0.2.1+6
 environment:
-  sdk: ">=3.5.0 <4.0.0"
+  sdk: ">=3.10.0 <4.0.0"
+  flutter: ">=3.38.1"
 dependencies:
   flutter:
     sdk: flutter
@@ -17,6 +18,7 @@ dependencies:
   path: ^1.9.0
   flutter_secure_storage: ^10.3.1
   uuid: ^4.5.0
+  package_info_plus: ^10.2.1
 
 dev_dependencies:
   flutter_test:
