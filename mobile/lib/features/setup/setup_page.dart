@@ -5,6 +5,7 @@ import '../../data/api_client.dart';
 import '../../data/auth_session.dart';
 import '../tracking/tracking_page.dart';
 import '../../ui/app_design.dart';
+import '../about/about_page.dart';
 
 class SetupPage extends StatefulWidget {
   const SetupPage({
@@ -247,6 +248,7 @@ class _SetupPageState extends State<SetupPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const AboutButton(),
         title: const Column(
           children: [
             Text('ReTrace'),

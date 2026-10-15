@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../data/auth_session.dart';
 import '../../ui/app_design.dart';
+import '../about/about_page.dart';
 import 'event_location_picker_page.dart';
 import 'tracking_service.dart';
 
@@ -298,6 +299,7 @@ class _TrackingPageState extends State<TrackingPage> {
       appBar: AppBar(
         title: const Text('תרגיל פעיל'),
         leading: const Icon(Icons.route_rounded),
+        actions: const [AboutButton()],
       ),
       body: ListView(
         padding: const EdgeInsets.all(24),

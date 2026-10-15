@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/auth_session.dart';
 import '../../ui/app_design.dart';
+import '../about/about_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, required this.onAuthenticated});
@@ -143,6 +144,7 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(leading: const AboutButton()),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
