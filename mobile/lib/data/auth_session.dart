@@ -44,6 +44,8 @@ class AuthSession {
   String _refreshToken;
   AuthUser user;
   Future<void>? _refreshInProgress;
+  bool _loggingOut = false;
+  bool _ended = false;
 
   static Future<AuthSession> login({
     required String email,
@@ -105,7 +107,7 @@ class AuthSession {
       );
       return temporary;
     } catch (_) {
-      await temporary.logout();
+      await temporary._clearLocalSession();
       return null;
     }
   }
@@ -126,10 +128,14 @@ class AuthSession {
     String path, {
     Map<String, dynamic>? body,
   }) async {
+    if (_loggingOut || _ended) throw StateError('Session ended');
     var response = await _send(method, path, body: body);
+    if (_loggingOut || _ended) throw StateError('Session ended');
     if (response.statusCode != 401) return response;
     await _refreshOnce();
+    if (_loggingOut || _ended) throw StateError('Session ended');
     response = await _send(method, path, body: body);
+    if (_loggingOut || _ended) throw StateError('Session ended');
     return response;
   }
 
@@ -170,7 +176,7 @@ class AuthSession {
       Uri.parse('$serverUrl/api/v1/auth/refresh'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'refresh_token': _refreshToken}),
-    );
+    ).timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) throw StateError('Session expired');
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     _accessToken = data['accessToken'].toString();
@@ -184,7 +190,44 @@ class AuthSession {
     await _storage.write(key: _refreshTokenKey, value: _refreshToken);
   }
 
-  Future<void> logout() async {
+  // False means local credentials were cleared, but server revocation could not
+  // be confirmed. The UI must report this rather than promise a global logout.
+  Future<bool> logout({bool allDevices = false}) async {
+    if (_loggingOut || _ended) return false;
+    _loggingOut = true;
+    try {
+      final refresh = _refreshInProgress;
+      if (refresh != null) {
+        try {
+          await refresh;
+        } catch (_) {
+          // Retry with the remaining credentials.
+        }
+      }
+      final scope = allDevices ? 'global' : 'local';
+      Future<http.Response> revoke() => http
+          .post(
+            Uri.parse('$serverUrl/api/v1/auth/logout?scope=$scope'),
+            headers: {'Authorization': 'Bearer $_accessToken'},
+          )
+          .timeout(const Duration(seconds: 15));
+      var response = await revoke();
+      if (response.statusCode == 401) {
+        await _refresh();
+        response = await revoke();
+      }
+      return response.statusCode == 204;
+    } catch (_) {
+      return false;
+    } finally {
+      await _clearLocalSession();
+    }
+  }
+
+  Future<void> _clearLocalSession() async {
+    _ended = true;
+    _accessToken = '';
+    _refreshToken = '';
     await _storage.delete(key: _accessTokenKey);
     await _storage.delete(key: _refreshTokenKey);
   }

@@ -14,7 +14,7 @@ class SetupPage extends StatefulWidget {
   });
 
   final AuthSession session;
-  final VoidCallback onLogout;
+  final Future<void> Function(bool allDevices) onLogout;
 
   @override
   State<SetupPage> createState() => _SetupPageState();
@@ -31,6 +31,7 @@ class _SetupPageState extends State<SetupPage> {
   String? _selectedExerciseId;
   bool _loadingExercises = false;
   bool _busy = false;
+  bool _loggingOut = false;
   String? _error;
 
   @override
@@ -254,10 +255,46 @@ class _SetupPageState extends State<SetupPage> {
           ],
         ),
         actions: [
-          IconButton(
-            onPressed: widget.onLogout,
+          PopupMenuButton<bool>(
+            enabled: !_loggingOut && !_busy,
             tooltip: 'יציאה',
-            icon: const Icon(Icons.logout),
+            icon: _loggingOut
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator())
+                : const Icon(Icons.logout),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: false, child: Text('יציאה מהמכשיר הזה')),
+              PopupMenuItem(value: true, child: Text('יציאה מכל המכשירים')),
+            ],
+            onSelected: (allDevices) async {
+              if (allDevices) {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('יציאה מכל המכשירים'),
+                    content: const Text('לצאת מהחשבון בכל המכשירים, כולל במכשיר הזה?'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('ביטול')),
+                      FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('יציאה')),
+                    ],
+                  ),
+                );
+                if (confirmed != true || !mounted) return;
+              }
+              setState(() {
+                _loggingOut = true;
+                _busy = true;
+              });
+              try {
+                await widget.onLogout(allDevices);
+              } finally {
+                if (mounted) {
+                  setState(() {
+                    _loggingOut = false;
+                    _busy = false;
+                  });
+                }
+              }
+            },
           ),
         ],
       ),
