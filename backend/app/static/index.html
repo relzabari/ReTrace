@@ -12,10 +12,12 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <style>
     * { box-sizing: border-box; }
+    [hidden] { display:none !important; }
     body { margin: 0; font-family: Arial, sans-serif; background: #f4f6f8; color: #17202a; }
     .protected { display:none !important; }
     body.authenticated header.protected { display:flex !important; }
-    body.authenticated main.protected { display:grid !important; }
+    body.authenticated main.protected:not([hidden]) { display:grid !important; }
+    body.authenticated section.protected:not([hidden]) { display:block !important; }
     #loginScreen { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; direction:rtl; }
     #loginScreen[hidden], body.authenticated #loginScreen { display:none !important; }
     .login-card { width:min(100%, 420px); padding:24px; border-radius:14px; background:#fff; box-shadow:0 12px 35px #0002; }
@@ -26,8 +28,12 @@
     .auth-error { min-height:20px; margin-top:10px; color:#b91c1c; font-size:13px; }
     header { padding: 16px 20px; background: #17202a; color: white; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
     header h1 { font-size: 20px; margin: 0 0 0 auto; }
+    .primary-nav { display:flex; gap:6px; padding:4px; border-radius:10px; background:#ffffff18; }
+    .primary-nav button { color:#fff; background:transparent; border-color:transparent; }
+    .primary-nav button.active { color:#17202a; background:#fff; }
     select, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #ccd1d1; font-size: 14px; }
     button { cursor: pointer; font-weight: 700; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
     main { display:grid; grid-template-columns: 300px minmax(0, 1fr); height:calc(100vh - 72px); min-height:560px; }
     aside { padding:16px; background:white; border-left:1px solid #ddd; overflow:auto; }
     .map-area { display:flex; flex-direction:column; min-width:0; min-height:0; }
@@ -84,6 +90,20 @@
     .user-row select, .user-row button { padding:6px; font-size:12px; }
     .add-user-grid { display:grid; gap:7px; margin-top:10px; }
     .add-user-grid input { width:100%; padding:8px; border:1px solid #ccd1d1; border-radius:7px; }
+    .settings-screen { min-height:calc(100vh - 72px); padding:24px; overflow:auto; }
+    .settings-shell { width:min(1180px, 100%); margin:0 auto; }
+    .settings-heading { margin:0 0 6px; font-size:26px; }
+    .settings-intro { margin:0 0 20px; color:#59636e; }
+    .settings-permission-note { margin-bottom:18px; padding:12px 14px; border:1px solid #bfdbfe; border-radius:10px; background:#eff6ff; color:#1e3a5f; }
+    .settings-no-access { padding:28px; border:1px dashed #c7cdd3; border-radius:12px; background:#fff; text-align:center; color:#59636e; }
+    .settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; align-items:start; }
+    .settings-panel { padding:18px; border:1px solid #dce1e5; border-radius:14px; background:#fff; box-shadow:0 4px 16px #17202a0d; }
+    .settings-panel h2 { margin:0 0 5px; font-size:20px; color:#0f5d4d; }
+    .settings-panel-description { margin:0 0 16px; color:#68737d; font-size:13px; }
+    .exercise-management-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+    .exercise-management-selection { padding:11px 12px; border-radius:9px; background:#f3f6f7; }
+    .exercise-management-selection strong { display:block; margin-bottom:3px; }
+    .settings-panel .card { margin-top:14px; margin-bottom:0; }
     dialog { width:min(92vw, 680px); padding:0; border:0; border-radius:14px; box-shadow:0 18px 55px #0005; }
     dialog::backdrop { background:#0f172a99; }
     .event-dialog { padding:20px; }
@@ -112,7 +132,7 @@
     #exportCanvas { width:100%; margin-top:12px; border-radius:8px; background:#dbe5e9; }
     .export-local-note { margin:10px 0 0; color:#4b5563; font-size:13px; line-height:1.45; }
     @media(max-width:600px){ .export-grid,.export-participants{grid-template-columns:1fr;} }
-    @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} }
+    @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} .settings-screen{padding:16px;} .settings-grid{grid-template-columns:1fr;} }
   </style>
 </head>
 <body>
@@ -129,18 +149,18 @@
 </section>
 <header class="protected">
   <h1>מערכת תחקור תרגילים — Prototype 0.2</h1>
+  <nav class="primary-nav" aria-label="ניווט ראשי">
+    <button id="showViewerButton" class="active" type="button" aria-current="page">מפה וצפייה</button>
+    <button id="showSettingsButton" type="button">הגדרות</button>
+  </nav>
   <select id="exerciseSelect"><option value="">בחר תרגיל</option></select>
   <button id="refresh">רענן</button>
-  <button id="createExerciseButton" type="button" hidden>תרגיל חדש</button>
-  <button id="renameExerciseButton" type="button" hidden>שנה שם</button>
-  <button id="closeExerciseButton" type="button" hidden>סגור תרגיל</button>
   <button id="exportVideoButton" type="button" disabled>ייצוא וידאו</button>
-  <button id="deleteExerciseButton" class="danger-button" type="button" hidden>מחק תרגיל</button>
   <span id="currentUserLabel"></span>
   <button id="logoutButton" type="button">יציאה</button>
   <button id="logoutAllButton" type="button">יציאה מכל המכשירים</button>
 </header>
-<main class="protected">
+<main id="viewerScreen" class="protected">
   <aside>
     <div class="card">
       <strong id="exerciseName">לא נבחר תרגיל</strong>
@@ -155,32 +175,6 @@
     <div class="card">
       <strong>מסלולים מוצגים</strong>
       <div id="trackInfo" class="muted">אין מסלולים מוצגים.</div>
-    </div>
-    <div id="exerciseAccess" class="card" hidden>
-      <strong>גישה לתרגיל</strong>
-      <p class="muted">הוסף חשבון קיים לתרגיל. משתתף רגיל יראה רק את נתוניו; מנהל יראה את כל נתוני התרגיל. אפשר לשייך נתוני משתתף ישנים לחשבון לאחר אימות זהותו.</p>
-      <form id="exerciseAccessForm">
-        <input id="exerciseAccessEmail" type="email" required placeholder="כתובת המייל של החשבון" aria-label="כתובת המייל של החשבון" />
-        <select id="legacyParticipant" aria-label="שיוך נתוני משתתף ישנים"><option value="">ללא שיוך נתונים ישנים</option></select>
-        <button type="submit">הוסף גישה</button>
-      </form>
-      <div id="exerciseAccessError" class="auth-error" role="status"></div>
-      <div id="exerciseAccessList"></div>
-    </div>
-    <div id="userManagement" class="card" hidden>
-      <strong>ניהול משתמשים</strong>
-      <div class="add-user-grid">
-        <input id="newUserEmail" type="email" placeholder="כתובת מייל" />
-        <input id="newUserPassword" type="password" placeholder="סיסמה זמנית (8 תווים לפחות)" />
-        <select id="newUserRole">
-          <option value="USER">User</option>
-          <option value="MANAGER">Manager</option>
-          <option value="ADMIN">ADMIN</option>
-        </select>
-        <button id="addUserButton" type="button">הוסף משתמש</button>
-      </div>
-      <div id="userManagementError" class="auth-error"></div>
-      <div id="usersList"></div>
     </div>
   </aside>
   <div class="map-area">
@@ -243,6 +237,59 @@
     </section>
   </div>
 </main>
+<section id="settingsScreen" class="protected settings-screen" hidden>
+  <div class="settings-shell">
+    <h1 class="settings-heading">הגדרות וניהול</h1>
+    <p class="settings-intro">כאן מנהלים תרגילים, הרשאות גישה ומשתמשים בהתאם להרשאות החשבון.</p>
+    <div id="settingsPermissionSummary" class="settings-permission-note"></div>
+    <div id="settingsNoAccess" class="settings-no-access" hidden>
+      לחשבון זה אין הרשאות ניהול. ניתן לצפות בתרגילים שהוקצו לך דרך מסך „מפה וצפייה”.
+    </div>
+    <div id="settingsGrid" class="settings-grid">
+      <section id="exerciseManagement" class="settings-panel" hidden>
+        <h2>ניהול תרגילים</h2>
+        <p class="settings-panel-description">יצירה, שינוי שם, סגירה וניהול הגישה לתרגיל שנבחר.</p>
+        <div class="exercise-management-selection">
+          <strong id="settingsExerciseName">לא נבחר תרגיל</strong>
+          <span id="settingsExerciseStatus" class="muted">בחר תרגיל מהרשימה העליונה כדי לנהל אותו.</span>
+        </div>
+        <div class="exercise-management-actions">
+          <button id="createExerciseButton" type="button">תרגיל חדש</button>
+          <button id="renameExerciseButton" type="button">שנה שם</button>
+          <button id="closeExerciseButton" type="button">סגור תרגיל</button>
+          <button id="deleteExerciseButton" class="danger-button" type="button" hidden>מחק תרגיל</button>
+        </div>
+        <div id="exerciseAccess" class="card" hidden>
+          <strong>גישה לתרגיל</strong>
+          <p class="muted">הוסף חשבון קיים לתרגיל. משתתף רגיל יראה רק את נתוניו; מנהל יראה את כל נתוני התרגיל. אפשר לשייך נתוני משתתף ישנים לחשבון לאחר אימות זהותו.</p>
+          <form id="exerciseAccessForm">
+            <input id="exerciseAccessEmail" type="email" required placeholder="כתובת המייל של החשבון" aria-label="כתובת המייל של החשבון" />
+            <select id="legacyParticipant" aria-label="שיוך נתוני משתתף ישנים"><option value="">ללא שיוך נתונים ישנים</option></select>
+            <button type="submit">הוסף גישה</button>
+          </form>
+          <div id="exerciseAccessError" class="auth-error" role="status"></div>
+          <div id="exerciseAccessList"></div>
+        </div>
+      </section>
+      <section id="userManagement" class="settings-panel" hidden>
+        <h2>ניהול משתמשים</h2>
+        <p class="settings-panel-description">הוספה, שינוי סיווג ומחיקה של משתמשים במערכת.</p>
+        <div class="add-user-grid">
+          <input id="newUserEmail" type="email" placeholder="כתובת מייל" />
+          <input id="newUserPassword" type="password" placeholder="סיסמה זמנית (8 תווים לפחות)" />
+          <select id="newUserRole">
+            <option value="USER">User</option>
+            <option value="MANAGER">Manager</option>
+            <option value="ADMIN">ADMIN</option>
+          </select>
+          <button id="addUserButton" type="button">הוסף משתמש</button>
+        </div>
+        <div id="userManagementError" class="auth-error"></div>
+        <div id="usersList"></div>
+      </section>
+    </div>
+  </div>
+</section>
 <dialog id="addEventDialog" aria-labelledby="addEventTitle">
   <form id="addEventForm" class="event-dialog">
     <h2 id="addEventTitle">הוסף אירוע</h2>
@@ -409,6 +456,53 @@ let selectedEventLatLng = null;
 let currentVideoExport = null;
 let videoExportPollTimer = null;
 
+function showAppScreen(screenName) {
+  const showingSettings = screenName === 'settings';
+  document.getElementById('viewerScreen').hidden = showingSettings;
+  document.getElementById('settingsScreen').hidden = !showingSettings;
+  document.getElementById('exportVideoButton').hidden = showingSettings;
+  const viewerButton = document.getElementById('showViewerButton');
+  const settingsButton = document.getElementById('showSettingsButton');
+  viewerButton.classList.toggle('active', !showingSettings);
+  settingsButton.classList.toggle('active', showingSettings);
+  viewerButton.toggleAttribute('aria-current', !showingSettings);
+  settingsButton.toggleAttribute('aria-current', showingSettings);
+  if (!showingSettings) {
+    requestAnimationFrame(() => {
+      map.invalidateSize({pan: false});
+      setTimeout(() => map.invalidateSize({pan: false}), 120);
+    });
+  }
+}
+
+function syncExerciseManagementSummary() {
+  const hasExercise = Boolean(currentExercise);
+  const exerciseName = document.getElementById('exerciseName').textContent || 'לא נבחר תרגיל';
+  document.getElementById('settingsExerciseName').textContent = hasExercise ? exerciseName : 'לא נבחר תרגיל';
+  document.getElementById('settingsExerciseStatus').textContent = hasExercise
+    ? `סטטוס: ${currentExerciseStatus}`
+    : 'בחר תרגיל מהרשימה העליונה כדי לנהל אותו.';
+  document.getElementById('renameExerciseButton').disabled = !hasExercise;
+  document.getElementById('closeExerciseButton').disabled = !hasExercise || currentExerciseStatus !== 'ACTIVE';
+  document.getElementById('deleteExerciseButton').disabled = !hasExercise;
+}
+
+function configureSettingsForCurrentUser() {
+  const isAdmin = currentUser?.role === 'ADMIN';
+  const canManageExercises = isAdmin || currentUser?.role === 'MANAGER';
+  document.getElementById('exerciseManagement').hidden = !canManageExercises;
+  document.getElementById('userManagement').hidden = !isAdmin;
+  document.getElementById('settingsGrid').hidden = !canManageExercises && !isAdmin;
+  document.getElementById('settingsNoAccess').hidden = canManageExercises || isAdmin;
+  document.getElementById('deleteExerciseButton').hidden = !isAdmin;
+  document.getElementById('settingsPermissionSummary').textContent = isAdmin
+    ? 'ADMIN: ניתן לנהל תרגילים, הרשאות גישה ומשתמשים, כולל מחיקת תרגיל לצמיתות.'
+    : canManageExercises
+      ? 'MANAGER: ניתן ליצור, לשנות ולסגור תרגילים ולנהל גישה לתרגילים. ניהול משתמשים ומחיקה לצמיתות זמינים ל־ADMIN בלבד.'
+      : 'USER: החשבון מיועד לצפייה ולהשתתפות בלבד ואין לו הרשאות לבצע שינויי ניהול.';
+  syncExerciseManagementSummary();
+}
+
 function canReportWebEvent() {
   return currentUser && (currentUser.role === 'ADMIN' || currentUser.role === 'MANAGER');
 }
@@ -496,19 +590,14 @@ async function initializeAuth() {
 async function showAuthenticatedApp() {
   document.body.classList.add('authenticated');
   document.getElementById('loginScreen').hidden = true;
+  showAppScreen('viewer');
   requestAnimationFrame(() => {
     map.invalidateSize({pan: false});
     setTimeout(() => map.invalidateSize({pan: false}), 150);
   });
   document.getElementById('currentUserLabel').textContent =
     `${currentUser.email} · ${currentUser.role}`;
-  const management = document.getElementById('userManagement');
-  management.hidden = currentUser.role !== 'ADMIN';
-  const canManageExercises = currentUser.role === 'ADMIN' || currentUser.role === 'MANAGER';
-  document.getElementById('createExerciseButton').hidden = !canManageExercises;
-  document.getElementById('renameExerciseButton').hidden = !canManageExercises;
-  document.getElementById('closeExerciseButton').hidden = !canManageExercises;
-  document.getElementById('deleteExerciseButton').hidden = currentUser.role !== 'ADMIN';
+  configureSettingsForCurrentUser();
   updateLiveActionButtons();
   await loadExercises();
   if (currentUser.role === 'ADMIN') await loadUsers();
@@ -561,6 +650,7 @@ async function loadExercise(id) {
   if (canManageAccess) await loadExerciseAccess(id);
   document.getElementById('exerciseName').textContent = data.exercise.name;
   document.getElementById('exerciseStatus').textContent = `סטטוס: ${data.exercise.status}`;
+  syncExerciseManagementSummary();
   const root = document.getElementById('participants');
   root.innerHTML = '';
   participantControls.clear();
@@ -1940,6 +2030,8 @@ document.getElementById('timelineCursor').oninput = event => {
   pausePlayback();
   setPlaybackPosition(findNearestPlaybackIndex(Number(event.target.value)));
 };
+document.getElementById('showViewerButton').onclick = () => showAppScreen('viewer');
+document.getElementById('showSettingsButton').onclick = () => showAppScreen('settings');
 document.getElementById('exerciseSelect').onchange = event => event.target.value && loadExercise(event.target.value);
 document.getElementById('refresh').onclick = async () => {
   await loadExercises();
@@ -1976,6 +2068,7 @@ document.getElementById('renameExerciseButton').onclick = async () => {
     await loadExercises();
     document.getElementById('exerciseSelect').value = currentExercise;
     document.getElementById('exerciseName').textContent = name.trim();
+    syncExerciseManagementSummary();
   } catch (error) {
     alert(`שינוי השם נכשל: ${error.message}`);
   }
@@ -2058,6 +2151,7 @@ document.getElementById('deleteExerciseForm').onsubmit = async event => {
     document.getElementById('eventAvailability').classList.remove('has-events');
     document.getElementById('liveViewButton').disabled = true;
     document.getElementById('exportVideoButton').disabled = true;
+    syncExerciseManagementSummary();
     updateTimeline();
     await loadExercises();
     alert(`התרגיל "${exerciseName}" וכל הנתונים המשויכים אליו נמחקו לצמיתות.`);
