@@ -101,6 +101,8 @@
     .settings-panel h2 { margin:0 0 5px; font-size:20px; color:#0f5d4d; }
     .settings-panel-description { margin:0 0 16px; color:#68737d; font-size:13px; }
     .exercise-management-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+    .exercise-management-picker { display:block; margin-bottom:12px; font-weight:700; }
+    .exercise-management-picker select { display:block; width:100%; margin-top:6px; background:#fff; }
     .exercise-management-selection { padding:11px 12px; border-radius:9px; background:#f3f6f7; }
     .exercise-management-selection strong { display:block; margin-bottom:3px; }
     .settings-panel .card { margin-top:14px; margin-bottom:0; }
@@ -249,6 +251,12 @@
       <section id="exerciseManagement" class="settings-panel" hidden>
         <h2>ניהול תרגילים</h2>
         <p class="settings-panel-description">יצירה, שינוי שם, סגירה וניהול הגישה לתרגיל שנבחר.</p>
+        <label class="exercise-management-picker" for="settingsExerciseSelect">
+          בחר תרגיל לניהול
+          <select id="settingsExerciseSelect">
+            <option value="">בחר תרגיל</option>
+          </select>
+        </label>
         <div class="exercise-management-selection">
           <strong id="settingsExerciseName">לא נבחר תרגיל</strong>
           <span id="settingsExerciseStatus" class="muted">בחר תרגיל מהרשימה העליונה כדי לנהל אותו.</span>
@@ -478,6 +486,10 @@ function showAppScreen(screenName) {
 function syncExerciseManagementSummary() {
   const hasExercise = Boolean(currentExercise);
   const exerciseName = document.getElementById('exerciseName').textContent || 'לא נבחר תרגיל';
+  const settingsSelect = document.getElementById('settingsExerciseSelect');
+  if (hasExercise && settingsSelect.querySelector(`option[value="${CSS.escape(currentExercise)}"]`)) {
+    settingsSelect.value = currentExercise;
+  }
   document.getElementById('settingsExerciseName').textContent = hasExercise ? exerciseName : 'לא נבחר תרגיל';
   document.getElementById('settingsExerciseStatus').textContent = hasExercise
     ? `סטטוס: ${currentExerciseStatus}`
@@ -608,16 +620,19 @@ mapResizeObserver.observe(document.getElementById('map'));
 
 async function loadExercises() {
   const data = await api('/exercises');
-  const select = document.getElementById('exerciseSelect');
-  const previous = select.value;
-  select.innerHTML = '<option value="">בחר תרגיל</option>';
-  data.items.forEach(exercise => {
-    const option = document.createElement('option');
-    option.value = exercise.id;
-    option.textContent = `${exercise.name} — ${exercise.status}`;
-    select.appendChild(option);
-  });
-  if (previous) select.value = previous;
+  const viewerSelect = document.getElementById('exerciseSelect');
+  const settingsSelect = document.getElementById('settingsExerciseSelect');
+  const previous = currentExercise || viewerSelect.value || settingsSelect.value;
+  for (const [select, placeholder] of [
+    [viewerSelect, 'בחר תרגיל'],
+    [settingsSelect, 'בחר תרגיל לניהול']
+  ]) {
+    select.replaceChildren(new Option(placeholder, ''));
+    data.items.forEach(exercise => {
+      select.appendChild(new Option(`${exercise.name} — ${exercise.status}`, exercise.id));
+    });
+    if (previous && data.items.some(exercise => exercise.id === previous)) select.value = previous;
+  }
 }
 
 async function loadExercise(id) {
@@ -2032,7 +2047,16 @@ document.getElementById('timelineCursor').oninput = event => {
 };
 document.getElementById('showViewerButton').onclick = () => showAppScreen('viewer');
 document.getElementById('showSettingsButton').onclick = () => showAppScreen('settings');
-document.getElementById('exerciseSelect').onchange = event => event.target.value && loadExercise(event.target.value);
+document.getElementById('exerciseSelect').onchange = async event => {
+  if (!event.target.value) return;
+  document.getElementById('settingsExerciseSelect').value = event.target.value;
+  await loadExercise(event.target.value);
+};
+document.getElementById('settingsExerciseSelect').onchange = async event => {
+  if (!event.target.value) return;
+  document.getElementById('exerciseSelect').value = event.target.value;
+  await loadExercise(event.target.value);
+};
 document.getElementById('refresh').onclick = async () => {
   await loadExercises();
   if (currentExercise) await loadExercise(currentExercise);
@@ -2142,6 +2166,7 @@ document.getElementById('deleteExerciseForm').onsubmit = async event => {
     videoExportPollTimer = null;
     currentVideoExport = null;
     document.getElementById('exerciseSelect').value = '';
+    document.getElementById('settingsExerciseSelect').value = '';
     document.getElementById('exerciseName').textContent = 'לא נבחר תרגיל';
     document.getElementById('exerciseStatus').textContent = '';
     document.getElementById('participants').innerHTML = '';
