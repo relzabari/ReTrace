@@ -1,9 +1,11 @@
 import math
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from geoalchemy2.functions import ST_MakePoint, ST_SetSRID
+from geoalchemy2.functions import ST_AsGeoJSON, ST_MakePoint, ST_SetSRID
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.models import (
@@ -20,6 +22,7 @@ from app.schemas.api import DemoExerciseCreate, DemoParticipantCreate
 
 MAX_POINTS_PER_PARTICIPANT = 20_000
 MAX_TOTAL_POINTS = 100_000
+MAX_EDITABLE_WAYPOINTS = 500
 
 
 @dataclass(frozen=True)
@@ -119,12 +122,11 @@ def generate_route_points(participant: DemoParticipantCreate) -> list[GeneratedP
     return generated
 
 
-def create_demo_exercise(
-    db: Session, payload: DemoExerciseCreate, current_user: AppUser
-) -> dict:
+def _generate_all_points(
+    payload: DemoExerciseCreate,
+) -> tuple[dict[str, list[GeneratedPoint]], int]:
     if payload.end_time > datetime.now(timezone.utc) + timedelta(seconds=5):
         raise ValueError("Demo exercise cannot end in the future")
-
     generated_by_key = {
         participant.client_key: generate_route_points(participant)
         for participant in payload.participants
@@ -134,20 +136,16 @@ def create_demo_exercise(
         raise ValueError(
             f"Demo exercise would create more than {MAX_TOTAL_POINTS} location points"
         )
+    return generated_by_key, total_points
 
-    exercise = Exercise(
-        name=payload.name.strip(),
-        status=ExerciseStatus.COMPLETED,
-        timezone=payload.timezone,
-        is_demo=True,
-        actual_start=payload.start_time,
-        closing_started_at=payload.end_time,
-        created_at=payload.start_time,
-    )
-    db.add(exercise)
-    db.flush()
-    db.add(ExerciseMember(exercise_id=exercise.id, user_id=current_user.id))
 
+def _populate_demo_children(
+    db: Session,
+    exercise: Exercise,
+    payload: DemoExerciseCreate,
+    current_user: AppUser,
+    generated_by_key: dict[str, list[GeneratedPoint]],
+) -> None:
     participants_by_key: dict[str, tuple[Participant, DeviceSession]] = {}
     for participant_payload in payload.participants:
         participant = Participant(
@@ -216,7 +214,8 @@ def create_demo_exercise(
             )
         )
 
-    db.commit()
+
+def _result(exercise: Exercise, payload: DemoExerciseCreate, total_points: int) -> dict:
     return {
         "id": exercise.id,
         "name": exercise.name,
@@ -227,4 +226,153 @@ def create_demo_exercise(
         "participantCount": len(payload.participants),
         "eventCount": len(payload.events),
         "pointCount": total_points,
+    }
+
+
+def create_demo_exercise(
+    db: Session, payload: DemoExerciseCreate, current_user: AppUser
+) -> dict:
+    generated_by_key, total_points = _generate_all_points(payload)
+
+    exercise = Exercise(
+        name=payload.name.strip(),
+        status=ExerciseStatus.COMPLETED,
+        timezone=payload.timezone,
+        is_demo=True,
+        demo_config=payload.model_dump(mode="json"),
+        actual_start=payload.start_time,
+        closing_started_at=payload.end_time,
+        created_at=payload.start_time,
+    )
+    db.add(exercise)
+    db.flush()
+    db.add(ExerciseMember(exercise_id=exercise.id, user_id=current_user.id))
+    _populate_demo_children(db, exercise, payload, current_user, generated_by_key)
+    db.commit()
+    return _result(exercise, payload, total_points)
+
+
+def update_demo_exercise(
+    db: Session,
+    exercise: Exercise,
+    payload: DemoExerciseCreate,
+    current_user: AppUser,
+) -> dict:
+    if not exercise.is_demo:
+        raise ValueError("Only demo exercises can be edited with this endpoint")
+    generated_by_key, total_points = _generate_all_points(payload)
+
+    db.execute(
+        delete(ExerciseEvent).where(ExerciseEvent.exercise_id == exercise.id)
+    )
+    db.execute(delete(Participant).where(Participant.exercise_id == exercise.id))
+    db.flush()
+
+    exercise.name = payload.name.strip()
+    exercise.status = ExerciseStatus.COMPLETED
+    exercise.timezone = payload.timezone
+    exercise.demo_config = payload.model_dump(mode="json")
+    exercise.actual_start = payload.start_time
+    exercise.closing_started_at = payload.end_time
+    exercise.created_at = payload.start_time
+    _populate_demo_children(db, exercise, payload, current_user, generated_by_key)
+    db.commit()
+    return _result(exercise, payload, total_points)
+
+
+def reconstruct_demo_config(db: Session, exercise: Exercise) -> dict:
+    """Build an editable definition for demos created before demo_config existed."""
+    participants = db.scalars(
+        select(Participant)
+        .where(Participant.exercise_id == exercise.id)
+        .order_by(Participant.display_name)
+    ).all()
+    participant_keys: dict[uuid.UUID, str] = {}
+    participant_configs = []
+    all_times: list[datetime] = []
+
+    for participant in participants:
+        rows = db.execute(
+            select(
+                LocationPoint.captured_at,
+                ST_AsGeoJSON(LocationPoint.location).label("geojson"),
+            )
+            .where(
+                LocationPoint.exercise_id == exercise.id,
+                LocationPoint.participant_id == participant.id,
+            )
+            .order_by(LocationPoint.captured_at, LocationPoint.sequence_number)
+        ).all()
+        if len(rows) < 2:
+            continue
+        step = max(1, math.ceil(len(rows) / MAX_EDITABLE_WAYPOINTS))
+        sampled = list(rows[::step])
+        if sampled[-1] != rows[-1]:
+            sampled.append(rows[-1])
+        route = []
+        for row in sampled:
+            longitude, latitude = json.loads(row.geojson)["coordinates"][:2]
+            route.append({"latitude": latitude, "longitude": longitude})
+        start_time = rows[0].captured_at
+        end_time = rows[-1].captured_at
+        interval = max(
+            1,
+            min(
+                300,
+                round((rows[1].captured_at - rows[0].captured_at).total_seconds()),
+            ),
+        )
+        client_key = str(participant.id)
+        participant_keys[participant.id] = client_key
+        participant_configs.append(
+            {
+                "client_key": client_key,
+                "display_name": participant.display_name,
+                "callsign": participant.callsign,
+                "role": participant.role,
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "interval_seconds": interval,
+                "route": route,
+            }
+        )
+        all_times.extend([start_time, end_time])
+
+    event_rows = db.execute(
+        select(
+            ExerciseEvent.participant_id,
+            ExerciseEvent.occurred_at,
+            ExerciseEvent.description,
+            ST_AsGeoJSON(ExerciseEvent.location).label("geojson"),
+        )
+        .where(ExerciseEvent.exercise_id == exercise.id)
+        .order_by(ExerciseEvent.occurred_at)
+    ).all()
+    event_configs = []
+    for row in event_rows:
+        longitude, latitude = json.loads(row.geojson)["coordinates"][:2]
+        event_configs.append(
+            {
+                "description": row.description,
+                "occurred_at": row.occurred_at.isoformat(),
+                "latitude": latitude,
+                "longitude": longitude,
+                "reporter_participant_key": participant_keys.get(
+                    row.participant_id
+                ),
+            }
+        )
+        all_times.append(row.occurred_at)
+
+    if not participant_configs:
+        raise ValueError("Demo exercise has no editable participant tracks")
+    start_time = min(all_times)
+    end_time = max(all_times)
+    return {
+        "name": exercise.name,
+        "timezone": exercise.timezone,
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "participants": participant_configs,
+        "events": event_configs,
     }

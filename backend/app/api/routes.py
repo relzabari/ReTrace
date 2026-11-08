@@ -38,7 +38,11 @@ from app.schemas.api import (
     ParticipantCreate,
     WebEventCreate,
 )
-from app.services.demo_exercise import create_demo_exercise
+from app.services.demo_exercise import (
+    create_demo_exercise,
+    reconstruct_demo_config,
+    update_demo_exercise,
+)
 
 router = APIRouter(prefix="/api/v1")
 PARTICIPANT_ROLES = {"רבשץ", "כיתת כוננות", "חמל", "מנהל תרגיל"}
@@ -119,6 +123,40 @@ def create_demo_exercise_route(
 ):
     try:
         return create_demo_exercise(db, payload, current_user)
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(422, str(error)) from error
+
+
+@router.get("/demo-exercises/{exercise_id}")
+def get_demo_exercise_definition(
+    exercise_id: uuid.UUID,
+    current_user: AppUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user, manage=True)
+    if not exercise.is_demo:
+        raise HTTPException(409, "Exercise is not a demo exercise")
+    if exercise.demo_config is None:
+        try:
+            exercise.demo_config = reconstruct_demo_config(db, exercise)
+            db.commit()
+        except ValueError as error:
+            db.rollback()
+            raise HTTPException(409, str(error)) from error
+    return {"id": exercise.id, "config": exercise.demo_config}
+
+
+@router.patch("/demo-exercises/{exercise_id}")
+def update_demo_exercise_route(
+    exercise_id: uuid.UUID,
+    payload: DemoExerciseCreate,
+    current_user: AppUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    exercise = exercise_access(db, exercise_id, current_user, manage=True)
+    try:
+        return update_demo_exercise(db, exercise, payload, current_user)
     except ValueError as error:
         db.rollback()
         raise HTTPException(422, str(error)) from error

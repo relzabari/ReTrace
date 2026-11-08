@@ -124,6 +124,7 @@
     .demo-active-button { color:#fff; background:#0f766e; border-color:#0f766e; }
     #demoBuilderMap { height:380px; margin-top:12px; border:1px solid #bcc7cd; border-radius:10px; direction:ltr; }
     .demo-map-hint { min-height:22px; margin-top:7px; color:#4b5563; font-size:13px; }
+    .demo-route-time-label { direction:ltr; padding:2px 5px; border:1px solid #64748b; border-radius:5px; background:#fff; color:#17202a; font-size:11px; font-weight:800; box-shadow:0 1px 4px #0003; }
     .demo-summary { margin-top:12px; padding:11px; border-radius:9px; background:#eff6ff; color:#1e3a5f; font-weight:700; }
     .demo-builder-error { min-height:22px; margin-top:10px; color:#b91c1c; }
     dialog { width:min(92vw, 680px); padding:0; border:0; border-radius:14px; box-shadow:0 18px 55px #0005; }
@@ -284,6 +285,7 @@
         <div class="exercise-management-actions">
           <button id="createExerciseButton" type="button">תרגיל חדש</button>
           <button id="createDemoExerciseButton" type="button" hidden>צור תרגיל לדוגמה</button>
+          <button id="editDemoExerciseButton" type="button" hidden>ערוך תרגיל לדוגמה</button>
           <button id="renameExerciseButton" type="button">שנה שם</button>
           <button id="closeExerciseButton" type="button">סגור תרגיל</button>
           <button id="deleteExerciseButton" class="danger-button" type="button" hidden>מחק תרגיל</button>
@@ -498,6 +500,7 @@ const eventMarkerLayer = L.layerGroup().addTo(map);
 let currentExercise = null;
 let currentExerciseStatus = null;
 let currentExerciseCreatedAt = null;
+let currentExerciseIsDemo = false;
 let loadedEvents = [];
 let playbackTimer = null;
 let playbackTimestamps = [];
@@ -527,6 +530,8 @@ let demoParticipants = [];
 let demoEvents = [];
 let demoEditMode = null;
 let demoSequence = 0;
+let demoExercisePreviousStart = '';
+let demoExercisePreviousEnd = '';
 
 function showAppScreen(screenName) {
   const showingSettings = screenName === 'settings';
@@ -561,6 +566,8 @@ function syncExerciseManagementSummary() {
   document.getElementById('renameExerciseButton').disabled = !hasExercise;
   document.getElementById('closeExerciseButton').disabled = !hasExercise || currentExerciseStatus !== 'ACTIVE';
   document.getElementById('deleteExerciseButton').disabled = !hasExercise;
+  document.getElementById('editDemoExerciseButton').hidden =
+    !(currentUser?.role === 'ADMIN' && hasExercise && currentExerciseIsDemo);
 }
 
 function configureSettingsForCurrentUser() {
@@ -572,6 +579,7 @@ function configureSettingsForCurrentUser() {
   document.getElementById('settingsNoAccess').hidden = canManageExercises || isAdmin;
   document.getElementById('deleteExerciseButton').hidden = !isAdmin;
   document.getElementById('createDemoExerciseButton').hidden = !isAdmin;
+  if (!isAdmin) document.getElementById('editDemoExerciseButton').hidden = true;
   document.getElementById('settingsPermissionSummary').textContent = isAdmin
     ? 'ADMIN: ניתן לנהל תרגילים, הרשאות גישה ומשתמשים, כולל מחיקת תרגיל לצמיתות.'
     : canManageExercises
@@ -719,6 +727,7 @@ async function loadExercise(id) {
   loadedEvents = normalizeEvents(eventData.items);
   currentExerciseStatus = data.exercise.status;
   currentExerciseCreatedAt = Date.parse(data.exercise.createdAt);
+  currentExerciseIsDemo = Boolean(data.exercise.isDemo);
   exerciseParticipants = data.participants;
   const canManageAccess = currentUser.role === 'ADMIN' || currentUser.role === 'MANAGER';
   document.getElementById('exerciseAccess').hidden = !canManageAccess;
@@ -2118,8 +2127,46 @@ function demoLocalDateTime(date) {
   return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}T${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
 }
 
+function demoIsoToLocal(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? '' : demoLocalDateTime(date);
+}
+
 function demoParticipantColor(index) {
   return trackColors[index % trackColors.length];
+}
+
+function demoDistanceMeters(first, second) {
+  const radius = 6371000;
+  const radians = value => value * Math.PI / 180;
+  const lat1 = radians(first.latitude);
+  const lat2 = radians(second.latitude);
+  const deltaLat = lat2 - lat1;
+  const deltaLon = radians(second.longitude - first.longitude);
+  const value = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+  return radius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+function estimatedDemoWaypointTimes(participant) {
+  if (!participant.route.length) return [];
+  const start = new Date(participant.start);
+  const end = new Date(participant.end);
+  if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf()) || end <= start) return [];
+  const cumulative = [0];
+  for (let index = 1; index < participant.route.length; index += 1) {
+    cumulative.push(cumulative[index - 1] + demoDistanceMeters(participant.route[index - 1], participant.route[index]));
+  }
+  const total = cumulative.at(-1);
+  return cumulative.map((distance, index) => {
+    const fraction = total > 0
+      ? distance / total
+      : (participant.route.length === 1 ? 0 : index / (participant.route.length - 1));
+    return new Date(start.getTime() + (end - start) * fraction);
+  });
+}
+
+function demoTimeLabel(date) {
+  return date.toLocaleTimeString('he-IL', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
 }
 
 function initializeDemoBuilderMap() {
@@ -2153,11 +2200,15 @@ function initializeDemoBuilderMap() {
 
 function redrawDemoBuilderMap({fit = false} = {}) {
   if (!demoBuilderMap || !demoBuilderLayers) return;
+  demoBuilderLayers.eachLayer(layer => {
+    if (typeof layer.unbindTooltip === 'function') layer.unbindTooltip();
+  });
   demoBuilderLayers.clearLayers();
   const bounds = [];
   demoParticipants.forEach((participant, index) => {
     const color = demoParticipantColor(index);
     const latLngs = participant.route.map(point => [point.latitude, point.longitude]);
+    const estimatedTimes = estimatedDemoWaypointTimes(participant);
     if (latLngs.length > 1) L.polyline(latLngs, {color, weight: 4}).addTo(demoBuilderLayers);
     latLngs.forEach((latLng, pointIndex) => {
       L.circleMarker(latLng, {
@@ -2166,7 +2217,10 @@ function redrawDemoBuilderMap({fit = false} = {}) {
         fillColor: color,
         fillOpacity: 1,
         weight: 2
-      }).bindTooltip(`${participant.name || `משתתף ${index + 1}`} · נקודה ${pointIndex + 1}`).addTo(demoBuilderLayers);
+      }).bindTooltip(
+        estimatedTimes[pointIndex] ? demoTimeLabel(estimatedTimes[pointIndex]) : `נקודה ${pointIndex + 1}`,
+        {permanent: true, direction: 'top', offset: [0, -5], className: 'demo-route-time-label'}
+      ).addTo(demoBuilderLayers);
       bounds.push(latLng);
     });
   });
@@ -2234,7 +2288,7 @@ function renderDemoParticipants() {
       input.oninput = () => {
         participant[property] = transform(input.value);
         updateDemoSummary();
-        if (field === 'name') redrawDemoBuilderMap();
+        if (['name', 'start', 'end'].includes(field)) redrawDemoBuilderMap();
         if (field === 'name') renderDemoEvents();
       };
     };
@@ -2362,28 +2416,74 @@ function updateDemoSummary() {
     `${demoParticipants.length} משתתפים · כ־${estimatedPoints.toLocaleString('he-IL')} נקודות GPS · ${demoEvents.length} אירועים`;
 }
 
-function openDemoExerciseDialog() {
+function openDemoExerciseDialog(config = null, exerciseId = null) {
   if (currentUser?.role !== 'ADMIN') return;
   const now = new Date();
   const end = new Date(now.getTime() - 30 * 60 * 1000);
   const start = new Date(end.getTime() - 60 * 60 * 1000);
-  document.getElementById('demoExerciseName').value = 'תרגיל לדוגמה';
-  document.getElementById('demoExerciseStart').value = demoLocalDateTime(start);
-  document.getElementById('demoExerciseEnd').value = demoLocalDateTime(end);
+  document.getElementById('demoExerciseName').value = config?.name ?? 'תרגיל לדוגמה';
+  document.getElementById('demoExerciseStart').value = config ? demoIsoToLocal(config.start_time) : demoLocalDateTime(start);
+  document.getElementById('demoExerciseEnd').value = config ? demoIsoToLocal(config.end_time) : demoLocalDateTime(end);
+  demoExercisePreviousStart = document.getElementById('demoExerciseStart').value;
+  demoExercisePreviousEnd = document.getElementById('demoExerciseEnd').value;
   document.getElementById('demoExerciseError').textContent = '';
-  demoParticipants = [];
-  demoEvents = [];
+  const dialog = document.getElementById('demoExerciseDialog');
+  dialog.dataset.exerciseId = exerciseId ?? '';
+  document.getElementById('demoExerciseTitle').textContent = exerciseId
+    ? 'עריכת תרגיל לדוגמה'
+    : 'יצירת תרגיל לדוגמה';
+  document.getElementById('saveDemoExerciseButton').textContent = exerciseId
+    ? 'שמור שינויים'
+    : 'צור תרגיל לדוגמה';
+  if (config) demoSequence += (config.participants?.length ?? 0) + (config.events?.length ?? 0);
+  demoParticipants = (config?.participants ?? []).map(participant => ({
+    key: participant.client_key || `participant-${++demoSequence}`,
+    name: participant.display_name ?? '',
+    callsign: participant.callsign ?? '',
+    role: participant.role ?? 'כיתת כוננות',
+    start: demoIsoToLocal(participant.start_time),
+    end: demoIsoToLocal(participant.end_time),
+    interval: Number(participant.interval_seconds ?? 10),
+    route: (participant.route ?? []).map(point => ({
+      latitude: Number(point.latitude),
+      longitude: Number(point.longitude)
+    }))
+  }));
+  demoEvents = (config?.events ?? []).map(exerciseEvent => ({
+    key: `event-${++demoSequence}`,
+    description: exerciseEvent.description ?? '',
+    time: demoIsoToLocal(exerciseEvent.occurred_at),
+    reporter: exerciseEvent.reporter_participant_key ?? '',
+    location: {
+      latitude: Number(exerciseEvent.latitude),
+      longitude: Number(exerciseEvent.longitude)
+    }
+  }));
   demoEditMode = null;
-  addDemoParticipant();
+  if (!demoParticipants.length) addDemoParticipant();
+  else renderDemoParticipants();
   renderDemoEvents();
   updateDemoSummary();
-  const dialog = document.getElementById('demoExerciseDialog');
   dialog.showModal();
   initializeDemoBuilderMap();
   const center = map.getCenter();
   demoBuilderMap.setView(center, map.getZoom());
   setTimeout(() => demoBuilderMap.invalidateSize(), 100);
-  redrawDemoBuilderMap();
+  redrawDemoBuilderMap({fit: Boolean(config)});
+}
+
+async function editCurrentDemoExercise() {
+  if (currentUser?.role !== 'ADMIN' || !currentExercise || !currentExerciseIsDemo) return;
+  const button = document.getElementById('editDemoExerciseButton');
+  button.disabled = true;
+  try {
+    const definition = await api(`/demo-exercises/${currentExercise}`);
+    openDemoExerciseDialog(definition.config, currentExercise);
+  } catch (error) {
+    alert(`טעינת התרגיל לעריכה נכשלה: ${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function closeDemoExerciseDialog() {
@@ -2472,20 +2572,25 @@ document.getElementById('createExerciseButton').onclick = async () => {
     alert(`יצירת התרגיל נכשלה: ${error.message}`);
   }
 };
-document.getElementById('createDemoExerciseButton').onclick = openDemoExerciseDialog;
+document.getElementById('createDemoExerciseButton').onclick = () => openDemoExerciseDialog();
+document.getElementById('editDemoExerciseButton').onclick = editCurrentDemoExercise;
 document.getElementById('addDemoParticipantButton').onclick = addDemoParticipant;
 document.getElementById('addDemoEventButton').onclick = addDemoEvent;
 document.getElementById('cancelDemoExerciseButton').onclick = closeDemoExerciseDialog;
 document.getElementById('demoExerciseStart').onchange = event => {
-  demoParticipants.filter(item => item.route.length === 0).forEach(item => item.start = event.target.value);
-  demoEvents.filter(item => !item.location).forEach(item => item.time = event.target.value);
+  demoParticipants.filter(item => item.start === demoExercisePreviousStart).forEach(item => item.start = event.target.value);
+  demoEvents.filter(item => item.time === demoExercisePreviousStart).forEach(item => item.time = event.target.value);
+  demoExercisePreviousStart = event.target.value;
   renderDemoParticipants();
   renderDemoEvents();
+  redrawDemoBuilderMap();
   updateDemoSummary();
 };
 document.getElementById('demoExerciseEnd').onchange = event => {
-  demoParticipants.filter(item => item.route.length === 0).forEach(item => item.end = event.target.value);
+  demoParticipants.filter(item => item.end === demoExercisePreviousEnd).forEach(item => item.end = event.target.value);
+  demoExercisePreviousEnd = event.target.value;
   renderDemoParticipants();
+  redrawDemoBuilderMap();
   updateDemoSummary();
 };
 document.getElementById('demoExerciseForm').onsubmit = async event => {
@@ -2501,10 +2606,11 @@ document.getElementById('demoExerciseForm').onsubmit = async event => {
     return;
   }
   saveButton.disabled = true;
-  saveButton.textContent = 'יוצר תרגיל…';
+  const editedExerciseId = document.getElementById('demoExerciseDialog').dataset.exerciseId;
+  saveButton.textContent = editedExerciseId ? 'שומר שינויים…' : 'יוצר תרגיל…';
   try {
-    const exercise = await api('/demo-exercises', {
-      method: 'POST',
+    const exercise = await api(editedExerciseId ? `/demo-exercises/${editedExerciseId}` : '/demo-exercises', {
+      method: editedExerciseId ? 'PATCH' : 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
     });
@@ -2514,12 +2620,12 @@ document.getElementById('demoExerciseForm').onsubmit = async event => {
     document.getElementById('settingsExerciseSelect').value = exercise.id;
     await loadExercise(exercise.id);
     showAppScreen('viewer');
-    alert(`התרגיל לדוגמה נוצר בהצלחה עם ${exercise.participantCount} משתתפים, ${exercise.pointCount} נקודות ו־${exercise.eventCount} אירועים.`);
+    alert(`התרגיל לדוגמה ${editedExerciseId ? 'עודכן' : 'נוצר'} בהצלחה עם ${exercise.participantCount} משתתפים, ${exercise.pointCount} נקודות ו־${exercise.eventCount} אירועים.`);
   } catch (error) {
     errorRoot.textContent = `יצירת התרגיל נכשלה: ${error.message}`;
   } finally {
     saveButton.disabled = false;
-    saveButton.textContent = 'צור תרגיל לדוגמה';
+    saveButton.textContent = editedExerciseId ? 'שמור שינויים' : 'צור תרגיל לדוגמה';
   }
 };
 document.getElementById('renameExerciseButton').onclick = async () => {
@@ -2604,6 +2710,7 @@ document.getElementById('deleteExerciseForm').onsubmit = async event => {
     currentExercise = null;
     currentExerciseStatus = null;
     currentExerciseCreatedAt = null;
+    currentExerciseIsDemo = false;
     exerciseParticipants = [];
     participantControls.clear();
     if (videoExportPollTimer !== null) clearInterval(videoExportPollTimer);

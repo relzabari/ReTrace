@@ -57,6 +57,14 @@ def startup() -> None:
         connection.execute(
             text(
                 """
+                ALTER TABLE exercises
+                ADD COLUMN IF NOT EXISTS demo_config JSONB
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
                 ALTER TABLE device_sessions
                 ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ
                 """

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 import uuid
 
 from fastapi import FastAPI
@@ -98,3 +99,67 @@ def test_admin_can_submit_complete_demo(monkeypatch):
 
     assert response.status_code == 201
     assert response.json() == {"id": "demo", "participantCount": 1}
+
+
+def test_admin_can_load_and_update_demo_definition(monkeypatch):
+    app = FastAPI()
+    app.include_router(routes.router)
+    admin = AppUser(
+        id=uuid.uuid4(), email="admin@example.com", role=UserRole.ADMIN, is_active=True
+    )
+    app.dependency_overrides[get_current_user] = lambda: admin
+    app.dependency_overrides[get_db] = lambda: object()
+    exercise_id = uuid.uuid4()
+    definition = _payload()
+    exercise = SimpleNamespace(id=exercise_id, is_demo=True, demo_config=definition)
+    monkeypatch.setattr(routes, "exercise_access", lambda *_args, **_kwargs: exercise)
+    monkeypatch.setattr(
+        routes,
+        "update_demo_exercise",
+        lambda _db, _exercise, payload, _user: {
+            "id": str(exercise_id),
+            "participantCount": len(payload.participants),
+        },
+    )
+    client = TestClient(app)
+
+    loaded = client.get(f"/api/v1/demo-exercises/{exercise_id}")
+    updated = client.patch(
+        f"/api/v1/demo-exercises/{exercise_id}", json=definition
+    )
+
+    assert loaded.status_code == 200
+    assert loaded.json()["config"]["name"] == "Demo"
+    assert updated.status_code == 200
+    assert updated.json()["participantCount"] == 1
+
+
+def test_old_demo_definition_is_reconstructed_once(monkeypatch):
+    class FakeDb:
+        committed = False
+
+        def commit(self):
+            self.committed = True
+
+        def rollback(self):
+            pass
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    admin = AppUser(
+        id=uuid.uuid4(), email="admin@example.com", role=UserRole.ADMIN, is_active=True
+    )
+    db = FakeDb()
+    exercise_id = uuid.uuid4()
+    exercise = SimpleNamespace(id=exercise_id, is_demo=True, demo_config=None)
+    app.dependency_overrides[get_current_user] = lambda: admin
+    app.dependency_overrides[get_db] = lambda: db
+    monkeypatch.setattr(routes, "exercise_access", lambda *_args, **_kwargs: exercise)
+    monkeypatch.setattr(routes, "reconstruct_demo_config", lambda *_args: _payload())
+
+    response = TestClient(app).get(f"/api/v1/demo-exercises/{exercise_id}")
+
+    assert response.status_code == 200
+    assert response.json()["config"]["name"] == "Demo"
+    assert exercise.demo_config is not None
+    assert db.committed is True
