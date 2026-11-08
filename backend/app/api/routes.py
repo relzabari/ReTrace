@@ -29,6 +29,7 @@ from app.models.models import (
 )
 from app.schemas.api import (
     DeviceSessionCreate,
+    DemoExerciseCreate,
     ExerciseAccessGrant,
     EventCreate,
     ExerciseCreate,
@@ -37,6 +38,7 @@ from app.schemas.api import (
     ParticipantCreate,
     WebEventCreate,
 )
+from app.services.demo_exercise import create_demo_exercise
 
 router = APIRouter(prefix="/api/v1")
 PARTICIPANT_ROLES = {"רבשץ", "כיתת כוננות", "חמל", "מנהל תרגיל"}
@@ -100,8 +102,26 @@ def create_exercise(
         "id": exercise.id,
         "name": exercise.name,
         "status": exercise.status,
+        "isDemo": exercise.is_demo,
         "createdAt": exercise.created_at,
     }
+
+
+@router.post(
+    "/demo-exercises",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+def create_demo_exercise_route(
+    payload: DemoExerciseCreate,
+    current_user: AppUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    try:
+        return create_demo_exercise(db, payload, current_user)
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(422, str(error)) from error
 
 
 @router.get("/exercises", dependencies=[Depends(get_current_user)])
@@ -124,6 +144,7 @@ def list_exercises(
                 "id": e.id,
                 "name": e.name,
                 "status": e.status,
+                "isDemo": e.is_demo,
                 "timezone": e.timezone,
                 "actualStart": e.actual_start,
                 "createdAt": e.created_at,
@@ -146,6 +167,7 @@ def get_exercise(
         "id": exercise.id,
         "name": exercise.name,
         "status": exercise.status,
+        "isDemo": exercise.is_demo,
         "timezone": exercise.timezone,
         "actualStart": exercise.actual_start,
         "createdAt": exercise.created_at,
@@ -636,6 +658,7 @@ def map_bootstrap(
             "id": exercise.id,
             "name": exercise.name,
             "status": exercise.status,
+            "isDemo": exercise.is_demo,
             "actualStart": exercise.actual_start,
             "createdAt": exercise.created_at,
         },

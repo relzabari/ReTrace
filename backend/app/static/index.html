@@ -106,6 +106,26 @@
     .exercise-management-selection { padding:11px 12px; border-radius:9px; background:#f3f6f7; }
     .exercise-management-selection strong { display:block; margin-bottom:3px; }
     .settings-panel .card { margin-top:14px; margin-bottom:0; }
+    #demoExerciseDialog { width:min(96vw, 1100px); max-height:94vh; overflow:auto; }
+    .demo-builder { padding:22px; }
+    .demo-builder h2 { margin:0 0 6px; }
+    .demo-builder-intro { margin:0 0 18px; color:#59636e; }
+    .demo-section { margin-top:16px; padding:16px; border:1px solid #dce1e5; border-radius:12px; background:#fff; }
+    .demo-section h3 { margin:0 0 12px; color:#0f5d4d; }
+    .demo-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .demo-grid label { display:block; font-weight:700; font-size:13px; }
+    .demo-grid input,.demo-grid select,.demo-participant input,.demo-participant select,.demo-event input,.demo-event select,.demo-event textarea { width:100%; margin-top:5px; padding:9px; border:1px solid #ccd1d1; border-radius:8px; font:inherit; }
+    .demo-participant,.demo-event { margin-top:10px; padding:12px; border:1px solid #dce1e5; border-radius:10px; background:#f8faf9; }
+    .demo-item-header { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
+    .demo-item-header strong { margin-left:auto; }
+    .demo-item-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; }
+    .demo-event .demo-item-grid { grid-template-columns:2fr 1fr 1fr; }
+    .demo-item-actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:9px; }
+    .demo-active-button { color:#fff; background:#0f766e; border-color:#0f766e; }
+    #demoBuilderMap { height:380px; margin-top:12px; border:1px solid #bcc7cd; border-radius:10px; direction:ltr; }
+    .demo-map-hint { min-height:22px; margin-top:7px; color:#4b5563; font-size:13px; }
+    .demo-summary { margin-top:12px; padding:11px; border-radius:9px; background:#eff6ff; color:#1e3a5f; font-weight:700; }
+    .demo-builder-error { min-height:22px; margin-top:10px; color:#b91c1c; }
     dialog { width:min(92vw, 680px); padding:0; border:0; border-radius:14px; box-shadow:0 18px 55px #0005; }
     dialog::backdrop { background:#0f172a99; }
     .event-dialog { padding:20px; }
@@ -134,7 +154,7 @@
     #exportCanvas { width:100%; margin-top:12px; border-radius:8px; background:#dbe5e9; }
     .export-local-note { margin:10px 0 0; color:#4b5563; font-size:13px; line-height:1.45; }
     @media(max-width:600px){ .export-grid,.export-participants{grid-template-columns:1fr;} }
-    @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} .settings-screen{padding:16px;} .settings-grid{grid-template-columns:1fr;} }
+    @media(max-width:800px){ main{grid-template-columns:1fr; height:auto; min-height:0;} aside{order:2;} .map-area{min-height:70vh;} #map{height:60vh; flex:none; min-height:320px;} #timeline{padding:10px 12px 12px;} #participants{max-height:40vh;} .settings-screen{padding:16px;} .settings-grid,.demo-grid,.demo-item-grid,.demo-event .demo-item-grid{grid-template-columns:1fr;} }
   </style>
 </head>
 <body>
@@ -263,6 +283,7 @@
         </div>
         <div class="exercise-management-actions">
           <button id="createExerciseButton" type="button">תרגיל חדש</button>
+          <button id="createDemoExerciseButton" type="button" hidden>צור תרגיל לדוגמה</button>
           <button id="renameExerciseButton" type="button">שנה שם</button>
           <button id="closeExerciseButton" type="button">סגור תרגיל</button>
           <button id="deleteExerciseButton" class="danger-button" type="button" hidden>מחק תרגיל</button>
@@ -298,6 +319,43 @@
     </div>
   </div>
 </section>
+<dialog id="demoExerciseDialog" aria-labelledby="demoExerciseTitle">
+  <form id="demoExerciseForm" class="demo-builder">
+    <h2 id="demoExerciseTitle">יצירת תרגיל לדוגמה</h2>
+    <p class="demo-builder-intro">הגדר משתתפים, צייר מסלולים על המפה והוסף אירועים. התרגיל יישמר כתרגיל סגור ויהיה זמין מיד לתחקור.</p>
+    <section class="demo-section">
+      <h3>1. פרטי התרגיל</h3>
+      <div class="demo-grid">
+        <label>שם התרגיל<input id="demoExerciseName" maxlength="200" required /></label>
+        <label>התחלה<input id="demoExerciseStart" type="datetime-local" step="1" required /></label>
+        <label>סיום<input id="demoExerciseEnd" type="datetime-local" step="1" required /></label>
+      </div>
+    </section>
+    <section class="demo-section">
+      <h3>2. משתתפים ומסלולים</h3>
+      <div class="muted">הוסף משתתף, לחץ על „ערוך מסלול”, ואז לחץ על המפה לפי סדר נקודות המסלול.</div>
+      <div id="demoParticipants"></div>
+      <button id="addDemoParticipantButton" type="button">הוסף משתתף</button>
+    </section>
+    <section class="demo-section">
+      <h3>מפת בניית התרגיל</h3>
+      <div id="demoBuilderMap" aria-label="מפה לציור מסלולים ואירועים"></div>
+      <div id="demoMapHint" class="demo-map-hint">בחר משתתף לעריכת מסלול או אירוע לבחירת מיקום.</div>
+    </section>
+    <section class="demo-section">
+      <h3>3. אירועים</h3>
+      <div class="muted">לכל אירוע יש לבחור תיאור, זמן, מדווח ומיקום על המפה.</div>
+      <div id="demoEvents"></div>
+      <button id="addDemoEventButton" type="button">הוסף אירוע</button>
+    </section>
+    <div id="demoSummary" class="demo-summary"></div>
+    <div id="demoExerciseError" class="demo-builder-error"></div>
+    <div class="event-dialog-actions">
+      <button id="saveDemoExerciseButton" type="submit">צור תרגיל לדוגמה</button>
+      <button id="cancelDemoExerciseButton" type="button">ביטול</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="addEventDialog" aria-labelledby="addEventTitle">
   <form id="addEventForm" class="event-dialog">
     <h2 id="addEventTitle">הוסף אירוע</h2>
@@ -463,6 +521,12 @@ let eventLocationMarker = null;
 let selectedEventLatLng = null;
 let currentVideoExport = null;
 let videoExportPollTimer = null;
+let demoBuilderMap = null;
+let demoBuilderLayers = null;
+let demoParticipants = [];
+let demoEvents = [];
+let demoEditMode = null;
+let demoSequence = 0;
 
 function showAppScreen(screenName) {
   const showingSettings = screenName === 'settings';
@@ -507,6 +571,7 @@ function configureSettingsForCurrentUser() {
   document.getElementById('settingsGrid').hidden = !canManageExercises && !isAdmin;
   document.getElementById('settingsNoAccess').hidden = canManageExercises || isAdmin;
   document.getElementById('deleteExerciseButton').hidden = !isAdmin;
+  document.getElementById('createDemoExerciseButton').hidden = !isAdmin;
   document.getElementById('settingsPermissionSummary').textContent = isAdmin
     ? 'ADMIN: ניתן לנהל תרגילים, הרשאות גישה ומשתמשים, כולל מחיקת תרגיל לצמיתות.'
     : canManageExercises
@@ -629,7 +694,8 @@ async function loadExercises() {
   ]) {
     select.replaceChildren(new Option(placeholder, ''));
     data.items.forEach(exercise => {
-      select.appendChild(new Option(`${exercise.name} — ${exercise.status}`, exercise.id));
+      const demoLabel = exercise.isDemo ? ' · דוגמה' : '';
+      select.appendChild(new Option(`${exercise.name} — ${exercise.status}${demoLabel}`, exercise.id));
     });
     if (previous && data.items.some(exercise => exercise.id === previous)) select.value = previous;
   }
@@ -664,7 +730,8 @@ async function loadExercise(id) {
   document.getElementById('exerciseAccessError').textContent = '';
   if (canManageAccess) await loadExerciseAccess(id);
   document.getElementById('exerciseName').textContent = data.exercise.name;
-  document.getElementById('exerciseStatus').textContent = `סטטוס: ${data.exercise.status}`;
+  document.getElementById('exerciseStatus').textContent =
+    `סטטוס: ${data.exercise.status}${data.exercise.isDemo ? ' · תרגיל לדוגמה' : ''}`;
   syncExerciseManagementSummary();
   const root = document.getElementById('participants');
   root.innerHTML = '';
@@ -2045,6 +2112,333 @@ document.getElementById('timelineCursor').oninput = event => {
   pausePlayback();
   setPlaybackPosition(findNearestPlaybackIndex(Number(event.target.value)));
 };
+
+function demoLocalDateTime(date) {
+  const two = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}T${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
+}
+
+function demoParticipantColor(index) {
+  return trackColors[index % trackColors.length];
+}
+
+function initializeDemoBuilderMap() {
+  if (demoBuilderMap) return;
+  demoBuilderMap = L.map('demoBuilderMap').setView([31.95, 35.13], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxNativeZoom: 19,
+    maxZoom: 20,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(demoBuilderMap);
+  demoBuilderLayers = L.layerGroup().addTo(demoBuilderMap);
+  demoBuilderMap.on('click', event => {
+    if (!demoEditMode) return;
+    if (demoEditMode.type === 'route') {
+      const participant = demoParticipants.find(item => item.key === demoEditMode.key);
+      if (!participant) return;
+      participant.route.push({latitude: event.latlng.lat, longitude: event.latlng.lng});
+      renderDemoParticipants();
+    } else if (demoEditMode.type === 'event') {
+      const exerciseEvent = demoEvents.find(item => item.key === demoEditMode.key);
+      if (!exerciseEvent) return;
+      exerciseEvent.location = {latitude: event.latlng.lat, longitude: event.latlng.lng};
+      demoEditMode = null;
+      renderDemoParticipants();
+      renderDemoEvents();
+    }
+    redrawDemoBuilderMap();
+    updateDemoSummary();
+  });
+}
+
+function redrawDemoBuilderMap({fit = false} = {}) {
+  if (!demoBuilderMap || !demoBuilderLayers) return;
+  demoBuilderLayers.clearLayers();
+  const bounds = [];
+  demoParticipants.forEach((participant, index) => {
+    const color = demoParticipantColor(index);
+    const latLngs = participant.route.map(point => [point.latitude, point.longitude]);
+    if (latLngs.length > 1) L.polyline(latLngs, {color, weight: 4}).addTo(demoBuilderLayers);
+    latLngs.forEach((latLng, pointIndex) => {
+      L.circleMarker(latLng, {
+        radius: pointIndex === latLngs.length - 1 ? 6 : 4,
+        color,
+        fillColor: color,
+        fillOpacity: 1,
+        weight: 2
+      }).bindTooltip(`${participant.name || `משתתף ${index + 1}`} · נקודה ${pointIndex + 1}`).addTo(demoBuilderLayers);
+      bounds.push(latLng);
+    });
+  });
+  demoEvents.forEach((exerciseEvent, index) => {
+    if (!exerciseEvent.location) return;
+    const latLng = [exerciseEvent.location.latitude, exerciseEvent.location.longitude];
+    L.marker(latLng, {icon: eventExplosionIcon(false)})
+      .bindTooltip(exerciseEvent.description || `אירוע ${index + 1}`)
+      .addTo(demoBuilderLayers);
+    bounds.push(latLng);
+  });
+  if (fit && bounds.length) demoBuilderMap.fitBounds(bounds, {padding: [35, 35], maxZoom: 17});
+}
+
+function setDemoMapHint(text) {
+  document.getElementById('demoMapHint').textContent = text;
+}
+
+function addDemoParticipant() {
+  demoSequence += 1;
+  const start = document.getElementById('demoExerciseStart').value;
+  const end = document.getElementById('demoExerciseEnd').value;
+  demoParticipants.push({
+    key: `participant-${demoSequence}`,
+    name: `משתתף ${demoParticipants.length + 1}`,
+    callsign: '',
+    role: 'כיתת כוננות',
+    start,
+    end,
+    interval: 10,
+    route: []
+  });
+  renderDemoParticipants();
+  renderDemoEvents();
+  updateDemoSummary();
+}
+
+function renderDemoParticipants() {
+  const root = document.getElementById('demoParticipants');
+  root.replaceChildren();
+  demoParticipants.forEach((participant, index) => {
+    const card = document.createElement('div');
+    card.className = 'demo-participant';
+    card.innerHTML = `
+      <div class="demo-item-header"><strong></strong><span class="track-color"></span><button type="button" data-action="remove">הסר</button></div>
+      <div class="demo-item-grid">
+        <label>שם<input data-field="name" maxlength="120" required /></label>
+        <label>סימן קריאה<input data-field="callsign" maxlength="120" /></label>
+        <label>תפקיד<select data-field="role"><option>כיתת כוננות</option><option>רבשץ</option><option>חמל</option><option>מנהל תרגיל</option></select></label>
+        <label>נקודה כל<select data-field="interval"><option value="5">5 שניות</option><option value="10">10 שניות</option><option value="30">30 שניות</option><option value="60">דקה</option></select></label>
+        <label>תחילת המסלול<input data-field="start" type="datetime-local" step="1" required /></label>
+        <label>סיום המסלול<input data-field="end" type="datetime-local" step="1" required /></label>
+      </div>
+      <div class="demo-item-actions">
+        <button type="button" data-action="edit-route">ערוך מסלול</button>
+        <button type="button" data-action="undo">מחק נקודה אחרונה</button>
+        <button type="button" data-action="clear">נקה מסלול</button>
+        <span class="muted" data-route-count></span>
+      </div>`;
+    card.querySelector('strong').textContent = `משתתף ${index + 1}`;
+    card.querySelector('.track-color').style.setProperty('--track-color', demoParticipantColor(index));
+    const bindField = (field, property, transform = value => value) => {
+      const input = card.querySelector(`[data-field="${field}"]`);
+      input.value = participant[property];
+      input.oninput = () => {
+        participant[property] = transform(input.value);
+        updateDemoSummary();
+        if (field === 'name') redrawDemoBuilderMap();
+        if (field === 'name') renderDemoEvents();
+      };
+    };
+    bindField('name', 'name');
+    bindField('callsign', 'callsign');
+    bindField('role', 'role');
+    bindField('interval', 'interval', Number);
+    bindField('start', 'start');
+    bindField('end', 'end');
+    const editing = demoEditMode?.type === 'route' && demoEditMode.key === participant.key;
+    const editButton = card.querySelector('[data-action="edit-route"]');
+    editButton.classList.toggle('demo-active-button', editing);
+    editButton.textContent = editing ? 'מסלול בעריכה' : 'ערוך מסלול';
+    editButton.onclick = () => {
+      demoEditMode = {type: 'route', key: participant.key};
+      setDemoMapHint(`לחץ על המפה כדי להוסיף נקודות למסלול של ${participant.name}.`);
+      renderDemoParticipants();
+      renderDemoEvents();
+      redrawDemoBuilderMap();
+    };
+    card.querySelector('[data-action="undo"]').onclick = () => {
+      participant.route.pop();
+      renderDemoParticipants();
+      redrawDemoBuilderMap();
+      updateDemoSummary();
+    };
+    card.querySelector('[data-action="clear"]').onclick = () => {
+      participant.route = [];
+      renderDemoParticipants();
+      redrawDemoBuilderMap();
+      updateDemoSummary();
+    };
+    card.querySelector('[data-action="remove"]').onclick = () => {
+      if (demoParticipants.length === 1) return;
+      demoParticipants.splice(index, 1);
+      if (demoEditMode?.key === participant.key) demoEditMode = null;
+      demoEvents.forEach(item => {
+        if (item.reporter === participant.key) item.reporter = '';
+      });
+      renderDemoParticipants();
+      renderDemoEvents();
+      redrawDemoBuilderMap();
+      updateDemoSummary();
+    };
+    card.querySelector('[data-route-count]').textContent = `${participant.route.length} נקודות דרך`;
+    root.append(card);
+  });
+}
+
+function addDemoEvent() {
+  demoSequence += 1;
+  demoEvents.push({
+    key: `event-${demoSequence}`,
+    description: '',
+    time: document.getElementById('demoExerciseStart').value,
+    reporter: '',
+    location: null
+  });
+  renderDemoEvents();
+  updateDemoSummary();
+}
+
+function renderDemoEvents() {
+  const root = document.getElementById('demoEvents');
+  root.replaceChildren();
+  demoEvents.forEach((exerciseEvent, index) => {
+    const card = document.createElement('div');
+    card.className = 'demo-event';
+    card.innerHTML = `
+      <div class="demo-item-header"><strong></strong><button type="button" data-action="remove">הסר</button></div>
+      <div class="demo-item-grid">
+        <label>תיאור<textarea data-field="description" maxlength="4000" rows="2" required></textarea></label>
+        <label>תאריך ושעה<input data-field="time" type="datetime-local" step="1" required /></label>
+        <label>מי דיווח?<select data-field="reporter"></select></label>
+      </div>
+      <div class="demo-item-actions"><button type="button" data-action="location">בחר מיקום על המפה</button><span class="muted" data-location></span></div>`;
+    card.querySelector('strong').textContent = `אירוע ${index + 1}`;
+    const description = card.querySelector('[data-field="description"]');
+    description.value = exerciseEvent.description;
+    description.oninput = () => {
+      exerciseEvent.description = description.value;
+      redrawDemoBuilderMap();
+    };
+    const time = card.querySelector('[data-field="time"]');
+    time.value = exerciseEvent.time;
+    time.oninput = () => exerciseEvent.time = time.value;
+    const reporter = card.querySelector('[data-field="reporter"]');
+    reporter.append(new Option('מנהל תרגיל', ''));
+    demoParticipants.forEach(participant => reporter.append(new Option(participant.name || 'משתתף', participant.key)));
+    reporter.value = exerciseEvent.reporter;
+    reporter.onchange = () => exerciseEvent.reporter = reporter.value;
+    const editing = demoEditMode?.type === 'event' && demoEditMode.key === exerciseEvent.key;
+    const locationButton = card.querySelector('[data-action="location"]');
+    locationButton.classList.toggle('demo-active-button', editing);
+    locationButton.onclick = () => {
+      demoEditMode = {type: 'event', key: exerciseEvent.key};
+      setDemoMapHint(`לחץ על המפה כדי לבחור מיקום לאירוע ${index + 1}.`);
+      renderDemoParticipants();
+      renderDemoEvents();
+    };
+    card.querySelector('[data-action="remove"]').onclick = () => {
+      demoEvents.splice(index, 1);
+      if (demoEditMode?.key === exerciseEvent.key) demoEditMode = null;
+      renderDemoEvents();
+      redrawDemoBuilderMap();
+      updateDemoSummary();
+    };
+    card.querySelector('[data-location]').textContent = exerciseEvent.location
+      ? `${exerciseEvent.location.latitude.toFixed(5)}, ${exerciseEvent.location.longitude.toFixed(5)}`
+      : 'טרם נבחר מיקום';
+    root.append(card);
+  });
+}
+
+function updateDemoSummary() {
+  let estimatedPoints = 0;
+  demoParticipants.forEach(participant => {
+    const start = new Date(participant.start);
+    const end = new Date(participant.end);
+    if (!Number.isNaN(start.valueOf()) && !Number.isNaN(end.valueOf()) && end > start) {
+      estimatedPoints += Math.ceil((end - start) / 1000 / participant.interval) + 1;
+    }
+  });
+  document.getElementById('demoSummary').textContent =
+    `${demoParticipants.length} משתתפים · כ־${estimatedPoints.toLocaleString('he-IL')} נקודות GPS · ${demoEvents.length} אירועים`;
+}
+
+function openDemoExerciseDialog() {
+  if (currentUser?.role !== 'ADMIN') return;
+  const now = new Date();
+  const end = new Date(now.getTime() - 30 * 60 * 1000);
+  const start = new Date(end.getTime() - 60 * 60 * 1000);
+  document.getElementById('demoExerciseName').value = 'תרגיל לדוגמה';
+  document.getElementById('demoExerciseStart').value = demoLocalDateTime(start);
+  document.getElementById('demoExerciseEnd').value = demoLocalDateTime(end);
+  document.getElementById('demoExerciseError').textContent = '';
+  demoParticipants = [];
+  demoEvents = [];
+  demoEditMode = null;
+  addDemoParticipant();
+  renderDemoEvents();
+  updateDemoSummary();
+  const dialog = document.getElementById('demoExerciseDialog');
+  dialog.showModal();
+  initializeDemoBuilderMap();
+  const center = map.getCenter();
+  demoBuilderMap.setView(center, map.getZoom());
+  setTimeout(() => demoBuilderMap.invalidateSize(), 100);
+  redrawDemoBuilderMap();
+}
+
+function closeDemoExerciseDialog() {
+  demoEditMode = null;
+  document.getElementById('demoExerciseDialog').close();
+}
+
+function validateDemoExercise() {
+  const name = document.getElementById('demoExerciseName').value.trim();
+  const startInput = document.getElementById('demoExerciseStart').value;
+  const endInput = document.getElementById('demoExerciseEnd').value;
+  const start = new Date(startInput);
+  const end = new Date(endInput);
+  if (!name) throw new Error('יש להזין שם לתרגיל.');
+  if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf()) || end <= start) throw new Error('טווח הזמן של התרגיל אינו תקין.');
+  if (end > new Date()) throw new Error('סיום התרגיל לא יכול להיות בעתיד.');
+  if (!demoParticipants.length) throw new Error('יש להוסיף לפחות משתתף אחד.');
+  demoParticipants.forEach((participant, index) => {
+    const participantStart = new Date(participant.start);
+    const participantEnd = new Date(participant.end);
+    if (!participant.name.trim()) throw new Error(`חסר שם למשתתף ${index + 1}.`);
+    if (participant.route.length < 2) throw new Error(`יש לצייר לפחות שתי נקודות במסלול של ${participant.name}.`);
+    if (participantStart < start || participantEnd > end || participantEnd <= participantStart) throw new Error(`הזמנים של ${participant.name} חייבים להיות בתוך טווח התרגיל.`);
+  });
+  demoEvents.forEach((exerciseEvent, index) => {
+    const eventTime = new Date(exerciseEvent.time);
+    if (!exerciseEvent.description.trim()) throw new Error(`חסר תיאור לאירוע ${index + 1}.`);
+    if (!exerciseEvent.location) throw new Error(`חסר מיקום לאירוע ${index + 1}.`);
+    if (eventTime < start || eventTime > end) throw new Error(`זמן אירוע ${index + 1} חייב להיות בתוך טווח התרגיל.`);
+  });
+  return {
+    name,
+    timezone: 'Asia/Jerusalem',
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+    participants: demoParticipants.map(participant => ({
+      client_key: participant.key,
+      display_name: participant.name.trim(),
+      callsign: participant.callsign.trim() || null,
+      role: participant.role,
+      start_time: new Date(participant.start).toISOString(),
+      end_time: new Date(participant.end).toISOString(),
+      interval_seconds: participant.interval,
+      route: participant.route
+    })),
+    events: demoEvents.map(exerciseEvent => ({
+      description: exerciseEvent.description.trim(),
+      occurred_at: new Date(exerciseEvent.time).toISOString(),
+      latitude: exerciseEvent.location.latitude,
+      longitude: exerciseEvent.location.longitude,
+      reporter_participant_key: exerciseEvent.reporter || null
+    }))
+  };
+}
+
 document.getElementById('showViewerButton').onclick = () => showAppScreen('viewer');
 document.getElementById('showSettingsButton').onclick = () => showAppScreen('settings');
 document.getElementById('exerciseSelect').onchange = async event => {
@@ -2076,6 +2470,56 @@ document.getElementById('createExerciseButton').onclick = async () => {
     await loadExercise(exercise.id);
   } catch (error) {
     alert(`יצירת התרגיל נכשלה: ${error.message}`);
+  }
+};
+document.getElementById('createDemoExerciseButton').onclick = openDemoExerciseDialog;
+document.getElementById('addDemoParticipantButton').onclick = addDemoParticipant;
+document.getElementById('addDemoEventButton').onclick = addDemoEvent;
+document.getElementById('cancelDemoExerciseButton').onclick = closeDemoExerciseDialog;
+document.getElementById('demoExerciseStart').onchange = event => {
+  demoParticipants.filter(item => item.route.length === 0).forEach(item => item.start = event.target.value);
+  demoEvents.filter(item => !item.location).forEach(item => item.time = event.target.value);
+  renderDemoParticipants();
+  renderDemoEvents();
+  updateDemoSummary();
+};
+document.getElementById('demoExerciseEnd').onchange = event => {
+  demoParticipants.filter(item => item.route.length === 0).forEach(item => item.end = event.target.value);
+  renderDemoParticipants();
+  updateDemoSummary();
+};
+document.getElementById('demoExerciseForm').onsubmit = async event => {
+  event.preventDefault();
+  const errorRoot = document.getElementById('demoExerciseError');
+  const saveButton = document.getElementById('saveDemoExerciseButton');
+  errorRoot.textContent = '';
+  let payload;
+  try {
+    payload = validateDemoExercise();
+  } catch (error) {
+    errorRoot.textContent = error.message;
+    return;
+  }
+  saveButton.disabled = true;
+  saveButton.textContent = 'יוצר תרגיל…';
+  try {
+    const exercise = await api('/demo-exercises', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    closeDemoExerciseDialog();
+    await loadExercises();
+    document.getElementById('exerciseSelect').value = exercise.id;
+    document.getElementById('settingsExerciseSelect').value = exercise.id;
+    await loadExercise(exercise.id);
+    showAppScreen('viewer');
+    alert(`התרגיל לדוגמה נוצר בהצלחה עם ${exercise.participantCount} משתתפים, ${exercise.pointCount} נקודות ו־${exercise.eventCount} אירועים.`);
+  } catch (error) {
+    errorRoot.textContent = `יצירת התרגיל נכשלה: ${error.message}`;
+  } finally {
+    saveButton.disabled = false;
+    saveButton.textContent = 'צור תרגיל לדוגמה';
   }
 };
 document.getElementById('renameExerciseButton').onclick = async () => {

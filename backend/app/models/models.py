@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2 import Geography
-from sqlalchemy import JSON, BigInteger, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -50,6 +50,7 @@ class Exercise(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[ExerciseStatus] = mapped_column(Enum(ExerciseStatus), default=ExerciseStatus.DRAFT, nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Jerusalem", nullable=False)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     actual_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

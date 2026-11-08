@@ -49,6 +49,14 @@ def startup() -> None:
         connection.execute(
             text(
                 """
+                ALTER TABLE exercises
+                ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
                 ALTER TABLE device_sessions
                 ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ
                 """

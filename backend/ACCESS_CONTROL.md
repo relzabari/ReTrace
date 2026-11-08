@@ -11,6 +11,7 @@
 - Device sessions, uploads, participant events and finish notifications require ownership, including for managers/admins. Managers report web events as themselves.
 - Existing server-generated videos may contain multiple participants and are readable only by assigned managers/ADMIN. Browser export remains available for a USER's own data.
 - Revoking membership prevents further exercise access even when the account still owns participant records.
+- Only ADMIN can create a demo exercise. Demo participants are synthetic records without user accounts, and the complete exercise, tracks and events are written in one transaction. The creating ADMIN is assigned as the exercise member.
 
 ## Existing installations
 
