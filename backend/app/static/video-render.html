@@ -189,9 +189,9 @@
       });
     }
 
-    function renderAt(timestamp) {
+    function renderAt(timestamp, showEvents = true) {
       renderedTracks.forEach(track => rebuildTrack(track, timestamp));
-      revealEvents(timestamp);
+      if (showEvents) revealEvents(timestamp);
       document.getElementById('videoTime').textContent = formatTime(timestamp);
     }
 
@@ -239,9 +239,13 @@
         if (!timeline.length || !bounds.isValid()) throw new Error('אין נתונים ליצירת הווידאו.');
         baseLayer(exportData.config.map_style).addTo(map);
         map.fitBounds(bounds, {padding:[70,70], maxZoom:17, animate:false});
-        renderAt(timeline[0]);
+        renderAt(timeline[0], false);
         const playbackSeconds = Math.max(0, (timeline.length - 1) / exportData.config.points_per_second);
-        window.exportDurationSeconds = Math.max(2, playbackSeconds + 1.5);
+        const eventLabelsEndAt = Math.max(0, ...exportData.events.map(event =>
+          timeline.indexOf(event.time) / exportData.config.points_per_second + 5
+        ));
+        window.exportRenderDurationSeconds = Math.max(playbackSeconds + 1.25, eventLabelsEndAt + .25);
+        window.exportDurationSeconds = Math.max(2, window.exportRenderDurationSeconds + .25);
         await new Promise(resolve => setTimeout(resolve, 3000));
         window.exportReady = true;
       } catch (error) {
@@ -256,12 +260,13 @@
       const startedAt = performance.now();
       const rate = exportData.config.points_per_second;
       const playbackSeconds = Math.max(0, (timeline.length - 1) / rate);
+      const exportDurationSeconds = window.exportRenderDurationSeconds;
       function frame(now) {
         const elapsed = (now - startedAt) / 1000;
         const index = Math.min(timeline.length - 1, Math.floor(elapsed * rate));
         renderAt(timeline[index]);
         window.exportProgress = Math.min(94, 5 + (elapsed / Math.max(playbackSeconds,.01)) * 89);
-        if (elapsed < playbackSeconds + 1.25) setTimeout(() => requestAnimationFrame(frame), 40);
+        if (elapsed < exportDurationSeconds) setTimeout(() => requestAnimationFrame(frame), 40);
         else {
           renderAt(timeline[timeline.length - 1]);
           window.exportProgress = 95;

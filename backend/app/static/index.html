@@ -1833,7 +1833,7 @@ function drawExportStar(context, x, y, radius) {
   context.stroke();
 }
 
-function renderExportFrame(canvas, baseMap, data, timestamp, headerHeight) {
+function renderExportFrame(canvas, baseMap, data, timestamp, headerHeight, elapsedSeconds = 0) {
   const context = canvas.getContext('2d');
   context.clearRect(0, 0, canvas.width, canvas.height);
   if (headerHeight) {
@@ -1912,7 +1912,7 @@ function renderExportFrame(canvas, baseMap, data, timestamp, headerHeight) {
   }
   for (const item of data.events) {
     if (item.time > timestamp) continue;
-    const age = (timestamp - item.time) / 1000;
+    const age = Math.max(0, elapsedSeconds - item.revealAtSeconds);
     const target = baseMap.project(item.latitude, item.longitude);
     if (age >= 5 || Math.floor(age * 4) % 2 === 0) {
       context.fillStyle = '#dc2626';
@@ -1960,10 +1960,20 @@ async function createLocalVideo(data) {
     ...data.events.map(item => item.time)
   ].sort((first, second) => first - second);
   if (!timeline.length) throw new Error('אין נתונים ליצירת הווידאו.');
+  data.events.forEach(item => {
+    let low = 0;
+    let high = timeline.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (timeline[middle] < item.time) low = middle + 1;
+      else high = middle;
+    }
+    item.revealAtSeconds = low / data.config.points_per_second;
+  });
   const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
   const mimeType = mimeTypes.find(value => MediaRecorder.isTypeSupported(value));
   if (!mimeType) throw new Error('הדפדפן אינו תומך בקידוד וידאו WebM.');
-  renderExportFrame(canvas, baseMap, data, timeline[0], headerHeight);
+  renderExportFrame(canvas, baseMap, data, timeline[0], headerHeight, 0);
   const chunks = [];
   const recorder = new MediaRecorder(canvas.captureStream(25), {
     mimeType,
@@ -1978,13 +1988,15 @@ async function createLocalVideo(data) {
   statusText.textContent = 'יוצר וידאו במחשב… אין לסגור את הלשונית.';
   const startedAt = performance.now();
   const playbackSeconds = Math.max(0, (timeline.length - 1) / data.config.points_per_second);
+  const eventLabelsEndAt = Math.max(0, ...data.events.map(item => item.revealAtSeconds + 5));
+  const exportDurationSeconds = Math.max(playbackSeconds + 1.25, eventLabelsEndAt + .25);
   await new Promise(resolve => {
     const frame = now => {
       const elapsed = (now - startedAt) / 1000;
       const index = Math.min(timeline.length - 1, Math.floor(elapsed * data.config.points_per_second));
-      renderExportFrame(canvas, baseMap, data, timeline[index], headerHeight);
-      progress.value = Math.min(99, Math.round(elapsed / Math.max(.1, playbackSeconds + 1.25) * 100));
-      if (elapsed < playbackSeconds + 1.25) requestAnimationFrame(frame);
+      renderExportFrame(canvas, baseMap, data, timeline[index], headerHeight, elapsed);
+      progress.value = Math.min(99, Math.round(elapsed / Math.max(.1, exportDurationSeconds) * 100));
+      if (elapsed < exportDurationSeconds) requestAnimationFrame(frame);
       else resolve();
     };
     requestAnimationFrame(frame);
