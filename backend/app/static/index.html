@@ -38,6 +38,10 @@
     aside { padding:16px; background:white; border-left:1px solid #ddd; overflow:auto; }
     .map-area { display:flex; flex-direction:column; min-width:0; min-height:0; }
     #map { flex:1; min-height:360px; }
+    .map-area:fullscreen { width:100vw; height:100vh; background:#111827; }
+    .map-area:fullscreen #map { flex:1 1 auto; height:auto; min-height:0; }
+    .map-area:fullscreen #timeline { flex:0 0 auto; max-height:42vh; overflow-y:auto; box-shadow:0 -4px 18px #0004; }
+    .map-area:fullscreen #fullscreenMapButton { color:#fff; background:#17202a; border-color:#17202a; }
     .leaflet-control-layers { direction:rtl; text-align:right; }
     .hybrid-osm-overlay { mix-blend-mode:multiply; }
     #timeline { background:#fff; border-top:1px solid #ddd; padding:12px 20px 14px; direction:rtl; }
@@ -209,6 +213,7 @@
       </div>
       <div class="timeline-controls" aria-label="פקדי ניגון">
         <span class="timeline-button-group">
+          <button id="fullscreenMapButton" type="button" aria-pressed="false">מסך מלא</button>
           <button id="playPauseButton" type="button" disabled>PLAY</button>
           <button id="stopButton" type="button" disabled>STOP</button>
         </span>
@@ -2075,6 +2080,28 @@ document.getElementById('cancelVideoExportButton').onclick = () => {
   document.getElementById('exportVideoDialog').close();
 };
 document.getElementById('downloadVideoExportButton').onclick = downloadVideoExport;
+
+function syncFullscreenMapButton() {
+  const active = document.fullscreenElement === document.querySelector('.map-area');
+  const button = document.getElementById('fullscreenMapButton');
+  button.textContent = active ? 'יציאה ממסך מלא' : 'מסך מלא';
+  button.setAttribute('aria-pressed', String(active));
+  requestAnimationFrame(() => map.invalidateSize({pan: false}));
+  setTimeout(() => map.invalidateSize({pan: false}), 150);
+}
+
+async function toggleMapFullscreen() {
+  const mapArea = document.querySelector('.map-area');
+  try {
+    if (document.fullscreenElement === mapArea) await document.exitFullscreen();
+    else await mapArea.requestFullscreen();
+  } catch (error) {
+    window.alert(`לא ניתן לפתוח מסך מלא: ${error.message}`);
+  }
+}
+
+document.getElementById('fullscreenMapButton').onclick = toggleMapFullscreen;
+document.addEventListener('fullscreenchange', syncFullscreenMapButton);
 
 document.getElementById('playPauseButton').onclick = () => {
   if (playbackTimer === null) startPlayback();
